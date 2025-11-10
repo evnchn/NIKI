@@ -9,6 +9,24 @@ client = AsyncAzureOpenAI(
     azure_deployment='gpt-4o-mini'
 )
 
+emotions = ['HAPPY', 'SAD', 'CONFUSED']
+
+def strip_emotion_suffix(response: str) -> str:
+    for emotion in emotions:
+        if response.endswith(emotion):
+            return emotion, response[:-len(emotion)]
+    return "", response
+
+def strip_bad_starting_characters(response: str) -> str:
+    bad_starting_characters = ['.', ',', '!', '?', ';', ':', ' ']
+    while response and response[0] in bad_starting_characters:
+        response = response[1:]
+    return response
+
+def mystrip(response: str) -> str:
+    prefix, stripped_response = strip_emotion_suffix(response)
+    return prefix, strip_bad_starting_characters(stripped_response)
+
 tools = [
     {
         "type": "function",
@@ -32,9 +50,13 @@ tools = [
 ]
 
 master_message_list = [
-    {'role': 'system', 'content': 'You are a helpful assistant. Begin your response with HAPPY, SAD, or CONFUSED to indicate your emotional tone.'}]
+    {'role': 'system', 'content': '''You are a helpful assistant. 
+While being helpful, keep responses as short as possible since they will be spoken aloud.
+Always end your response with HAPPY, SAD, or CONFUSED to indicate your emotional tone.'''}]
 
 render_event = Event()
+
+stop_voice_event = Event()
 
 
 class SharedState:
@@ -95,14 +117,34 @@ async def post_user_message(message: str):
         my_shared_state.turn = 'user'
         break
 
-
 @ui.page('/')
-def main_page():
+@ui.page('/{mode}')
+async def main_page(mode: str):
+    if mode not in ('niki', 'user'):
+        ui.label('Invalid mode. Use /niki or /user.')
+        return
+    
+    mybutton = ui.button("Click to begin")
+    await mybutton.clicked()
+    mybutton.delete()
+
     main_container = ui.column()
+
+    if mode == 'niki':
+        stop_voice_event.subscribe(lambda: ui.run_javascript("window.speechSynthesis.cancel();"))
+    else:
+        ui.button('Stop Voice', on_click=lambda: stop_voice_event.emit())
+        ui.button('Clear Conversation', on_click=lambda: [
+            master_message_list.clear(),
+            master_message_list.append({'role': 'system', 'content': '''You are a helpful assistant.'''},
+            render_event.emit())
+        ])
 
     def refresh():
         main_container.clear()
-        for msg in master_message_list:
+        for i, msg in enumerate(master_message_list):
+            if mode == "niki" and i != len(master_message_list) - 1:
+                continue # niki mode only shows latest message
             role = msg['role']
             content = msg['content']
             if role == 'user':
@@ -110,17 +152,19 @@ def main_page():
                     ui.label(f'User: {content}')
             elif role == 'assistant':
                 with main_container:
-                    ui.label(f'AI: {content}')
+                    prefix, stripped_content = mystrip(content or '')
+                    ui.label(f'AI ({prefix}): {stripped_content}')
+                    if mode == "niki":
+                        ui.run_javascript(f"window.speechSynthesis.speak(new SpeechSynthesisUtterance(`{stripped_content}`));")
         if my_shared_state.turn == 'user':
             with main_container:
-                ui.label("User's Turn")
-                user_input = ui.input(placeholder='Type your message...')
-                ui.button('Send', on_click=lambda: post_user_message(
-                    user_input.value))
-
+                if mode != 'niki':
+                    ui.label("User's Turn")
+                    user_input = ui.input(placeholder='Type your message...')
+                    ui.button('Send', on_click=lambda: post_user_message(
+                        user_input.value))
         else:
             with main_container:
-                ui.label("AI's Turn")
                 ui.label("AI is thinking...")
 
     refresh()
