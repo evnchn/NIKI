@@ -46,13 +46,34 @@ tools = [
             },
             'strict': True,
         },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "wait_for_user_input",
+            "description": "Wait for the user to provide input before continuing the conversation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "random_nonce": {
+                        "type": "string",
+                        "description": "A random nonce to ensure uniqueness of the request."
+                    },
+                },
+                "required": ["random_nonce"],
+                "additionalProperties": False,
+            },
+            'strict': True,
+        },
     }
 ]
 
 master_message_list = [
     {'role': 'system', 'content': '''You are a helpful assistant. 
 While being helpful, keep responses as short as possible since they will be spoken aloud.
-Always end your response with HAPPY, SAD, or CONFUSED to indicate your emotional tone.'''}]
+Always end your response with HAPPY, SAD, or CONFUSED to indicate your emotional tone.
+Always use wait_for_user_input tool to pause and wait for user input before continuing the conversation. 
+You can assume otherwise user's message will not come until you use this tool.'''}]
 
 render_event = Event()
 
@@ -61,9 +82,13 @@ stop_voice_event = Event()
 
 class SharedState:
     turn = binding.BindableProperty(on_change=render_event.emit)
+    pending_tool_call_id = binding.BindableProperty()
+    pending_tool_args = binding.BindableProperty()
 
     def __init__(self):
-        self.turn = 'user'  # or 'ai'
+        self.turn = 'user'  # or 'ai' or 'admin'
+        self.pending_tool_call_id = None
+        self.pending_tool_args = None
 
 
 my_shared_state = SharedState()
@@ -72,10 +97,13 @@ render_event.subscribe(lambda: print(
     f"Turn changed to: {my_shared_state.turn}"))
 
 
-async def post_user_message(message: str):
-    master_message_list.append({'role': 'user', 'content': message})
+async def post_user_message():
     my_shared_state.turn = 'ai'
-    while True:
+    agent_continue = True
+    while agent_continue:
+        # save master_message_list to .debug.json
+        with open('.debug.json', 'w') as f:
+            json.dump(master_message_list, f, indent=2)
         result = await client.chat.completions.create(
             model='gpt-4o-mini',
             messages=master_message_list,
@@ -83,21 +111,24 @@ async def post_user_message(message: str):
         )
         if result.choices[0].message.tool_calls:
             master_message_list.append(result.choices[0].message.to_dict())
+            tool_calls_handled = False
             for tool_call in result.choices[0].message.tool_calls:
                 tool_name = tool_call.function.name
                 tool_args = tool_call.function.arguments
                 if tool_name == 'assess_camera_framing':
-                    master_message_list.append(
-                        {
-                            'role': 'tool',
-                            "type": "function_call_output",
-                            "tool_call_id": tool_call.id,
-                            "content": json.dumps({
-                                "framing_quality": "good",
-                                "details": "The subject is well-centered with appropriate headroom and balanced composition.",
-                                "random_nonce": json.loads(tool_args).get("random_nonce", "")
-                            })
-                        })
+                    my_shared_state.pending_tool_call_id = tool_call.id
+                    my_shared_state.pending_tool_args = tool_args
+                    my_shared_state.turn = 'admin'
+                    tool_calls_handled = True
+                    agent_continue = False
+                    break
+                elif tool_name == 'wait_for_user_input':
+                    my_shared_state.pending_tool_call_id = tool_call.id
+                    my_shared_state.pending_tool_args = tool_args
+                    my_shared_state.turn = 'user'
+                    tool_calls_handled = True
+                    agent_continue = False
+                    break
                 else:
                     master_message_list.append(
                         {'role': 'tool',
@@ -107,21 +138,72 @@ async def post_user_message(message: str):
                                 "error": f"Unknown tool: {tool_name}"
                             })
                          })
-            continue
+            if not tool_calls_handled:
+                continue
+            # If tool_calls_handled, we are waiting for user input, so break the while
         elif result.choices[0].message.content:
             master_message_list.append(
                 {'role': 'assistant', 'content': result.choices[0].message.content})
         elif result.choices[0].message.refusal:
             master_message_list.append(
                 {'role': 'assistant', 'content': result.choices[0].message.refusal})
-        my_shared_state.turn = 'user'
-        break
+        # my_shared_state.turn = 'user'
+        # break
+
+async def handle_user_input(message: str):
+    if my_shared_state.pending_tool_call_id:
+        master_message_list.append(
+            {
+                'role': 'tool',
+                "type": "function_call_output",
+                "tool_call_id": my_shared_state.pending_tool_call_id,
+                "content": json.dumps({
+                    "user_input": message,
+                    "random_nonce": json.loads(my_shared_state.pending_tool_args).get("random_nonce", "")
+                })
+            }
+        )
+        my_shared_state.pending_tool_call_id = None
+        my_shared_state.pending_tool_args = None
+    await post_user_message()
+
+async def handle_admin_choice(framing_quality: str):
+    if my_shared_state.pending_tool_call_id:
+        details = {
+            "good": "The subject is well-centered with appropriate headroom and balanced composition.",
+            "bad": "The subject is off-center with poor headroom and unbalanced composition."
+        }.get(framing_quality, "Unknown quality")
+        master_message_list.append(
+            {
+                'role': 'tool',
+                "type": "function_call_output",
+                "tool_call_id": my_shared_state.pending_tool_call_id,
+                "content": json.dumps({
+                    "framing_quality": framing_quality,
+                    "details": details,
+                    "random_nonce": json.loads(my_shared_state.pending_tool_args).get("random_nonce", "")
+                })
+            }
+        )
+        my_shared_state.pending_tool_call_id = None
+        my_shared_state.pending_tool_args = None
+        my_shared_state.turn = 'ai'
+        await post_user_message()
+
+def clear_conversation():
+    master_message_list.clear()
+    master_message_list.append({'role': 'system', 'content': '''You are a helpful assistant. 
+While being helpful, keep responses as short as possible since they will be spoken aloud.
+Always end your response with HAPPY, SAD, or CONFUSED to indicate your emotional tone.'''})
+    my_shared_state.pending_tool_call_id = None
+    my_shared_state.pending_tool_args = None
+    render_event.emit()
 
 @ui.page('/')
 @ui.page('/{mode}')
 async def main_page(mode: str):
-    if mode not in ('niki', 'user'):
-        ui.label('Invalid mode. Use /niki or /user.')
+    if mode not in ('niki', 'user', 'admin'):
+        ui.label('Invalid mode. Use /niki, /user, or /admin.')
         return
     
     mybutton = ui.button("Click to begin")
@@ -134,11 +216,7 @@ async def main_page(mode: str):
         stop_voice_event.subscribe(lambda: ui.run_javascript("window.speechSynthesis.cancel();"))
     else:
         ui.button('Stop Voice', on_click=lambda: stop_voice_event.emit())
-        ui.button('Clear Conversation', on_click=lambda: [
-            master_message_list.clear(),
-            master_message_list.append({'role': 'system', 'content': '''You are a helpful assistant.'''},
-            render_event.emit())
-        ])
+        ui.button('Clear Conversation', on_click=clear_conversation)
 
     def refresh():
         main_container.clear()
@@ -161,8 +239,13 @@ async def main_page(mode: str):
                 if mode != 'niki':
                     ui.label("User's Turn")
                     user_input = ui.input(placeholder='Type your message...')
-                    ui.button('Send', on_click=lambda: post_user_message(
+                    ui.button('Send', on_click=lambda: handle_user_input(
                         user_input.value))
+        elif my_shared_state.turn == 'admin':
+            with main_container:
+                ui.label("Admin: Choose camera framing quality")
+                ui.button('Good Framing', on_click=lambda: handle_admin_choice('good'))
+                ui.button('Bad Framing', on_click=lambda: handle_admin_choice('bad'))
         else:
             with main_container:
                 ui.label("AI is thinking...")
