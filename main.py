@@ -212,15 +212,16 @@ async def main_page(mode: str):
         ui.label('Invalid mode. Use /niki, /user, or /admin.')
         return
     
-    mybutton = ui.button("Click to begin")
-    await mybutton.clicked()
-    mybutton.delete()
+    if mode == 'niki':
+        mybutton = ui.button("Click to begin")
+        await mybutton.clicked()
+        mybutton.delete()
 
     main_container = ui.column()
 
     if mode == 'niki':
         stop_voice_event.subscribe(lambda: ui.run_javascript("window.speechSynthesis.cancel();"))
-    else:
+    if mode == 'admin':
         ui.button('Stop Voice', on_click=lambda: stop_voice_event.emit())
         ui.button('Clear Conversation', on_click=clear_conversation)
 
@@ -258,9 +259,12 @@ async def main_page(mode: str):
                     ui.button('Send', on_click=lambda: handle_user_input(
                         user_input.value))
             elif my_shared_state.turn == 'admin' and my_shared_state.pending_tool_name == 'assess_camera_framing':
-                ui.label("Admin: Choose camera framing quality")
-                ui.button('Good Framing', on_click=lambda: handle_admin_choice('good'))
-                ui.button('Bad Framing', on_click=lambda: handle_admin_choice('bad'))
+                if mode == 'admin':
+                    ui.label("Admin: Choose camera framing quality")
+                    ui.button('Good Framing', on_click=lambda: handle_admin_choice('good'))
+                    ui.button('Bad Framing', on_click=lambda: handle_admin_choice('bad'))
+                else:
+                    ui.label("Waiting for admin to assess camera framing...")
             elif len(master_message_list) == 1 and mode in ('user', 'admin'):
                 ui.button('Start Conversation', on_click=AIloop)
             else:
