@@ -69,11 +69,11 @@ tools = [
 ]
 
 master_message_list = [
-    {'role': 'system', 'content': '''You are a helpful assistant. 
-While being helpful, keep responses as short as possible since they will be spoken aloud.
-Always end your response with HAPPY, SAD, or CONFUSED to indicate your emotional tone.
-Always use wait_for_user_input tool to pause and wait for user input before continuing the conversation. 
-You can assume otherwise user's message will not come until you use this tool.'''}]
+    {'role': 'system', 'content': '''You are a helpful assistant. Your responses will be spoken aloud, so keep them short.
+
+Always end your response with one of "HAPPY", "SAD", or "CONFUSED" to indicate your emotional tone.
+
+Always use the wait_for_user_input tool to pause and wait for user input before continuing the conversation. Do not assume user input is available without using this tool.'''}]
 
 render_event = Event()
 
@@ -84,11 +84,13 @@ class SharedState:
     turn = binding.BindableProperty(on_change=render_event.emit)
     pending_tool_call_id = binding.BindableProperty()
     pending_tool_args = binding.BindableProperty()
+    pending_tool_name = binding.BindableProperty()
 
     def __init__(self):
         self.turn = 'user'  # or 'ai' or 'admin'
         self.pending_tool_call_id = None
         self.pending_tool_args = None
+        self.pending_tool_name = None
 
 
 my_shared_state = SharedState()
@@ -97,7 +99,7 @@ render_event.subscribe(lambda: print(
     f"Turn changed to: {my_shared_state.turn}"))
 
 
-async def post_user_message():
+async def AIloop():
     my_shared_state.turn = 'ai'
     agent_continue = True
     while agent_continue:
@@ -118,6 +120,7 @@ async def post_user_message():
                 if tool_name == 'assess_camera_framing':
                     my_shared_state.pending_tool_call_id = tool_call.id
                     my_shared_state.pending_tool_args = tool_args
+                    my_shared_state.pending_tool_name = tool_name
                     my_shared_state.turn = 'admin'
                     tool_calls_handled = True
                     agent_continue = False
@@ -125,6 +128,7 @@ async def post_user_message():
                 elif tool_name == 'wait_for_user_input':
                     my_shared_state.pending_tool_call_id = tool_call.id
                     my_shared_state.pending_tool_args = tool_args
+                    my_shared_state.pending_tool_name = tool_name
                     my_shared_state.turn = 'user'
                     tool_calls_handled = True
                     agent_continue = False
@@ -147,8 +151,7 @@ async def post_user_message():
         elif result.choices[0].message.refusal:
             master_message_list.append(
                 {'role': 'assistant', 'content': result.choices[0].message.refusal})
-        # my_shared_state.turn = 'user'
-        # break
+        render_event.emit()
 
 async def handle_user_input(message: str):
     if my_shared_state.pending_tool_call_id:
@@ -165,7 +168,8 @@ async def handle_user_input(message: str):
         )
         my_shared_state.pending_tool_call_id = None
         my_shared_state.pending_tool_args = None
-    await post_user_message()
+        my_shared_state.pending_tool_name = None
+    await AIloop()
 
 async def handle_admin_choice(framing_quality: str):
     if my_shared_state.pending_tool_call_id:
@@ -187,8 +191,9 @@ async def handle_admin_choice(framing_quality: str):
         )
         my_shared_state.pending_tool_call_id = None
         my_shared_state.pending_tool_args = None
+        my_shared_state.pending_tool_name = None
         my_shared_state.turn = 'ai'
-        await post_user_message()
+        await AIloop()
 
 def clear_conversation():
     master_message_list.clear()
@@ -197,6 +202,7 @@ While being helpful, keep responses as short as possible since they will be spok
 Always end your response with HAPPY, SAD, or CONFUSED to indicate your emotional tone.'''})
     my_shared_state.pending_tool_call_id = None
     my_shared_state.pending_tool_args = None
+    my_shared_state.pending_tool_name = None
     render_event.emit()
 
 @ui.page('/')
@@ -220,34 +226,44 @@ async def main_page(mode: str):
 
     def refresh():
         main_container.clear()
-        for i, msg in enumerate(master_message_list):
-            if mode == "niki" and i != len(master_message_list) - 1:
-                continue # niki mode only shows latest message
-            role = msg['role']
-            content = msg['content']
-            if role == 'user':
-                with main_container:
+        with main_container:
+            for i, msg in enumerate(master_message_list):
+                if mode == "niki" and i != len(master_message_list) - 1:
+                    continue # niki mode only shows latest message
+                role = msg['role']
+                content = msg['content']
+                if role == 'user':
                     ui.label(f'User: {content}')
-            elif role == 'assistant':
-                with main_container:
-                    prefix, stripped_content = mystrip(content or '')
-                    ui.label(f'AI ({prefix}): {stripped_content}')
-                    if mode == "niki":
-                        ui.run_javascript(f"window.speechSynthesis.speak(new SpeechSynthesisUtterance(`{stripped_content}`));")
-        if my_shared_state.turn == 'user':
-            with main_container:
+                elif role == 'assistant':
+                    if 'tool_calls' in msg:
+                        for tool_call in msg['tool_calls']:
+                            ui.label(f'AI is calling {tool_call["function"]["name"]}...')
+                    else:
+                        prefix, stripped_content = mystrip(content or '')
+                        ui.label(f'AI ({prefix}): {stripped_content}')
+                        if mode == "niki":
+                            ui.run_javascript(f"window.speechSynthesis.speak(new SpeechSynthesisUtterance(`{stripped_content}`));")
+                elif role == 'tool':
+                    result = json.loads(content)
+                    if 'framing_quality' in result:
+                        ui.label(f'Camera framing assessed: {result["framing_quality"]} - {result["details"]}')
+                    elif 'user_input' in result:
+                        ui.label(f'User input: {result["user_input"]}')
+                    else:
+                        ui.label(f'Tool result: {result}')
+            if my_shared_state.turn == 'user' and my_shared_state.pending_tool_name == 'wait_for_user_input':
                 if mode != 'niki':
                     ui.label("User's Turn")
                     user_input = ui.input(placeholder='Type your message...')
                     ui.button('Send', on_click=lambda: handle_user_input(
                         user_input.value))
-        elif my_shared_state.turn == 'admin':
-            with main_container:
+            elif my_shared_state.turn == 'admin' and my_shared_state.pending_tool_name == 'assess_camera_framing':
                 ui.label("Admin: Choose camera framing quality")
                 ui.button('Good Framing', on_click=lambda: handle_admin_choice('good'))
                 ui.button('Bad Framing', on_click=lambda: handle_admin_choice('bad'))
-        else:
-            with main_container:
+            elif len(master_message_list) == 1 and mode in ('user', 'admin'):
+                ui.button('Start Conversation', on_click=AIloop)
+            else:
                 ui.label("AI is thinking...")
 
     refresh()
