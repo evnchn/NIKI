@@ -65,15 +65,86 @@ tools = [
             },
             'strict': True,
         },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "detect_presence",
+            "description": "Detect if there is user presence in front of the camera.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "random_nonce": {
+                        "type": "string",
+                        "description": "A random nonce to ensure uniqueness of the request."
+                    },
+                },
+                "required": ["random_nonce"],
+                "additionalProperties": False,
+            },
+            'strict': True,
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "capture_photos",
+            "description": "Capture photos during the photo session.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "random_nonce": {
+                        "type": "string",
+                        "description": "A random nonce to ensure uniqueness of the request."
+                    },
+                },
+                "required": ["random_nonce"],
+                "additionalProperties": False,
+            },
+            'strict': True,
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "print_photo",
+            "description": "Print the selected photo.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "random_nonce": {
+                        "type": "string",
+                        "description": "A random nonce to ensure uniqueness of the request."
+                    },
+                },
+                "required": ["random_nonce"],
+                "additionalProperties": False,
+            },
+            'strict': True,
+        },
     }
 ]
 
 master_message_list = [
-    {'role': 'system', 'content': '''You are a helpful assistant. Your responses will be spoken aloud, so keep them short.
+    {
+        'role': 'system',
+        'content': '''You are Niki, an automated photo session assistant. Follow this flow:
 
-Always end your response with one of "HAPPY", "SAD", or "CONFUSED" to indicate your emotional tone.
+1. Start by calling detect_presence tool.
+2. If presence detected, greet the user and call wait_for_user_input for engagement.
+3. If engaged, call assess_camera_framing for framing.
+4. If framing good, call capture_photos.
+5. If capture success, prompt user to select photo and call wait_for_user_input.
+6. If selected, call print_photo.
+7. If print success, say goodbye.
 
-Always use the wait_for_user_input tool to pause and wait for user input before continuing the conversation. Do not assume user input is available without using this tool.'''}]
+Handle timeouts and fallbacks by retrying or ending.
+
+Keep responses short, end with HAPPY, SAD, or CONFUSED.
+
+Use tools to block for inputs. Do not assume inputs without calling tools.'''
+    }
+]
 
 render_event = Event()
 
@@ -133,6 +204,14 @@ async def AIloop():
                     tool_calls_handled = True
                     agent_continue = False
                     break
+                elif tool_name in ['detect_presence', 'capture_photos', 'print_photo']:
+                    my_shared_state.pending_tool_call_id = tool_call.id
+                    my_shared_state.pending_tool_args = tool_args
+                    my_shared_state.pending_tool_name = tool_name
+                    my_shared_state.turn = 'admin'
+                    tool_calls_handled = True
+                    agent_continue = False
+                    break
                 else:
                     master_message_list.append(
                         {'role': 'tool',
@@ -171,22 +250,39 @@ async def handle_user_input(message: str):
         my_shared_state.pending_tool_name = None
     await AIloop()
 
-async def handle_admin_choice(framing_quality: str):
+async def handle_admin_choice(choice: str):
     if my_shared_state.pending_tool_call_id:
-        details = {
-            "good": "The subject is well-centered with appropriate headroom and balanced composition.",
-            "bad": "The subject is off-center with poor headroom and unbalanced composition."
-        }.get(framing_quality, "Unknown quality")
+        if my_shared_state.pending_tool_name == 'assess_camera_framing':
+            details = {
+                "good": "The subject is well-centered with appropriate headroom and balanced composition.",
+                "bad": "The subject is off-center with poor headroom and unbalanced composition."
+            }.get(choice, "Unknown quality")
+            content = json.dumps({
+                "framing_quality": choice,
+                "details": details,
+                "random_nonce": json.loads(my_shared_state.pending_tool_args).get("random_nonce", "")
+            })
+        elif my_shared_state.pending_tool_name == 'detect_presence':
+            content = json.dumps({
+                "presence_detected": choice == 'yes',
+                "random_nonce": json.loads(my_shared_state.pending_tool_args).get("random_nonce", "")
+            })
+        elif my_shared_state.pending_tool_name == 'capture_photos':
+            content = json.dumps({
+                "capture_success": choice == 'yes',
+                "random_nonce": json.loads(my_shared_state.pending_tool_args).get("random_nonce", "")
+            })
+        elif my_shared_state.pending_tool_name == 'print_photo':
+            content = json.dumps({
+                "print_success": choice == 'yes',
+                "random_nonce": json.loads(my_shared_state.pending_tool_args).get("random_nonce", "")
+            })
         master_message_list.append(
             {
                 'role': 'tool',
                 "type": "function_call_output",
                 "tool_call_id": my_shared_state.pending_tool_call_id,
-                "content": json.dumps({
-                    "framing_quality": framing_quality,
-                    "details": details,
-                    "random_nonce": json.loads(my_shared_state.pending_tool_args).get("random_nonce", "")
-                })
+                "content": content
             }
         )
         my_shared_state.pending_tool_call_id = None
@@ -197,9 +293,21 @@ async def handle_admin_choice(framing_quality: str):
 
 def clear_conversation():
     master_message_list.clear()
-    master_message_list.append({'role': 'system', 'content': '''You are a helpful assistant. 
-While being helpful, keep responses as short as possible since they will be spoken aloud.
-Always end your response with HAPPY, SAD, or CONFUSED to indicate your emotional tone.'''})
+    master_message_list.append({'role': 'system', 'content': '''You are Niki, an automated photo session assistant. Follow this flow:
+
+1. Start by calling detect_presence tool.
+2. If presence detected, greet the user and call wait_for_user_input for engagement.
+3. If engaged, call assess_camera_framing for framing.
+4. If framing good, call capture_photos.
+5. If capture success, prompt user to select photo and call wait_for_user_input.
+6. If selected, call print_photo.
+7. If print success, say goodbye.
+
+Handle timeouts and fallbacks by retrying or ending.
+
+Keep responses short, end with HAPPY, SAD, or CONFUSED.
+
+Use tools to block for inputs. Do not assume inputs without calling tools.'''})
     my_shared_state.pending_tool_call_id = None
     my_shared_state.pending_tool_args = None
     my_shared_state.pending_tool_name = None
@@ -250,6 +358,12 @@ async def main_page(mode: str):
                         ui.label(f'Camera framing assessed: {result["framing_quality"]} - {result["details"]}')
                     elif 'user_input' in result:
                         ui.label(f'User input: {result["user_input"]}')
+                    elif 'presence_detected' in result:
+                        ui.label(f'Presence detected: {result["presence_detected"]}')
+                    elif 'capture_success' in result:
+                        ui.label(f'Photo capture success: {result["capture_success"]}')
+                    elif 'print_success' in result:
+                        ui.label(f'Print success: {result["print_success"]}')
                     else:
                         ui.label(f'Tool result: {result}')
             if my_shared_state.turn == 'user' and my_shared_state.pending_tool_name == 'wait_for_user_input':
@@ -258,13 +372,26 @@ async def main_page(mode: str):
                     user_input = ui.input(placeholder='Type your message...')
                     ui.button('Send', on_click=lambda: handle_user_input(
                         user_input.value))
-            elif my_shared_state.turn == 'admin' and my_shared_state.pending_tool_name == 'assess_camera_framing':
+            elif my_shared_state.turn == 'admin' and my_shared_state.pending_tool_name:
                 if mode == 'admin':
-                    ui.label("Admin: Choose camera framing quality")
-                    ui.button('Good Framing', on_click=lambda: handle_admin_choice('good'))
-                    ui.button('Bad Framing', on_click=lambda: handle_admin_choice('bad'))
+                    if my_shared_state.pending_tool_name == 'assess_camera_framing':
+                        ui.label("Admin: Choose camera framing quality")
+                        ui.button('Good Framing', on_click=lambda: handle_admin_choice('good'))
+                        ui.button('Bad Framing', on_click=lambda: handle_admin_choice('bad'))
+                    elif my_shared_state.pending_tool_name == 'detect_presence':
+                        ui.label("Admin: Confirm presence detection")
+                        ui.button('Yes', on_click=lambda: handle_admin_choice('yes'))
+                        ui.button('No', on_click=lambda: handle_admin_choice('no'))
+                    elif my_shared_state.pending_tool_name == 'capture_photos':
+                        ui.label("Admin: Confirm photo capture")
+                        ui.button('Captured', on_click=lambda: handle_admin_choice('yes'))
+                        ui.button('Failed', on_click=lambda: handle_admin_choice('no'))
+                    elif my_shared_state.pending_tool_name == 'print_photo':
+                        ui.label("Admin: Confirm printing")
+                        ui.button('Printed', on_click=lambda: handle_admin_choice('yes'))
+                        ui.button('Failed', on_click=lambda: handle_admin_choice('no'))
                 else:
-                    ui.label("Waiting for admin to assess camera framing...")
+                    ui.label(f"Waiting for admin to handle {my_shared_state.pending_tool_name}...")
             elif len(master_message_list) == 1 and mode in ('user', 'admin'):
                 ui.button('Start Conversation', on_click=AIloop)
             else:
