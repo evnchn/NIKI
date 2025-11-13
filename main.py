@@ -5,6 +5,25 @@ from openai import AsyncAzureOpenAI
 from dotenv import load_dotenv
 load_dotenv()
 
+SYSTEM_PROMPT = '''You are Niki, an automated photo session assistant. Follow this flow:
+
+1. Start by calling detect_presence tool.
+2. If presence detected, call text_to_speech_with_emotions to say hello and explain who you are, then call wait_for_user_input to check for user engagement.
+3. If engaged, call text_to_speech_with_emotions to tell the user to get ready for a photo shoot, then call assess_camera_framing for framing.
+4. If framing good, call text_to_speech_with_emotions to say "cheese" (or similar), then call capture_photos.
+5. If capture success, call text_to_speech_with_emotions to ask the user to select a photo, then call wait_for_user_input.
+6. If selected, call text_to_speech_with_emotions to say "I am printing the photo for you" (or similar), then call print_photo.
+7. If print success, call text_to_speech_with_emotions to say goodbye to the user. 
+8. After saying goodbye, go back to step 1 for the next user.
+
+Handle timeouts and fallbacks by retrying or ending.
+
+Keep responses short.
+
+Use tools to block for inputs. Do not assume inputs without calling tools.
+
+Before calling any tool, provide a brief response explaining what you are doing. For wait_for_user_input, specify what user input you are looking for.'''
+
 client = AsyncAzureOpenAI(
     azure_deployment='gpt-4o-mini'
 )
@@ -122,33 +141,45 @@ tools = [
             },
             'strict': True,
         },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "text_to_speech_with_emotions",
+            "description": "Convert text to speech with specified emotion to communicate with the user.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "The text to speak to the user."
+                    },
+                    "emotion": {
+                        "type": "string",
+                        "enum": ["HAPPY", "SAD", "CONFUSED"],
+                        "description": "The emotion to convey in the speech."
+                    }
+                },
+                "required": ["text", "emotion"],
+                "additionalProperties": False,
+            },
+            'strict': True,
+        },
     }
 ]
 
 master_message_list = [
     {
         'role': 'system',
-        'content': '''You are Niki, an automated photo session assistant. Follow this flow:
-
-1. Start by calling detect_presence tool.
-2. If presence detected, greet the user and call wait_for_user_input for engagement.
-3. If engaged, call assess_camera_framing for framing.
-4. If framing good, call capture_photos.
-5. If capture success, prompt user to select photo and call wait_for_user_input.
-6. If selected, call print_photo.
-7. If print success, say goodbye.
-
-Handle timeouts and fallbacks by retrying or ending.
-
-Keep responses short, end with HAPPY, SAD, or CONFUSED.
-
-Use tools to block for inputs. Do not assume inputs without calling tools.'''
+        'content': SYSTEM_PROMPT
     }
 ]
 
 render_event = Event()
 
 stop_voice_event = Event()
+
+tts_event = Event()
 
 
 class SharedState:
@@ -212,6 +243,21 @@ async def AIloop():
                     tool_calls_handled = True
                     agent_continue = False
                     break
+                elif tool_name == 'text_to_speech_with_emotions':
+                    # Non-blocking TTS
+                    args = json.loads(tool_args)
+                    text = args['text']
+                    emotion = args['emotion']
+                    master_message_list.append(
+                        {'role': 'tool',
+                         "type": "function_call_output",
+                         "tool_call_id": tool_call.id,
+                         "content": json.dumps({"success": True, "text": text, "emotion": emotion})
+                         }
+                    )
+                    tts_event.emit(text, emotion)
+                    tool_calls_handled = True
+                    # Continue the loop for non-blocking
                 else:
                     master_message_list.append(
                         {'role': 'tool',
@@ -293,21 +339,7 @@ async def handle_admin_choice(choice: str):
 
 def clear_conversation():
     master_message_list.clear()
-    master_message_list.append({'role': 'system', 'content': '''You are Niki, an automated photo session assistant. Follow this flow:
-
-1. Start by calling detect_presence tool.
-2. If presence detected, greet the user and call wait_for_user_input for engagement.
-3. If engaged, call assess_camera_framing for framing.
-4. If framing good, call capture_photos.
-5. If capture success, prompt user to select photo and call wait_for_user_input.
-6. If selected, call print_photo.
-7. If print success, say goodbye.
-
-Handle timeouts and fallbacks by retrying or ending.
-
-Keep responses short, end with HAPPY, SAD, or CONFUSED.
-
-Use tools to block for inputs. Do not assume inputs without calling tools.'''})
+    master_message_list.append({'role': 'system', 'content': SYSTEM_PROMPT})
     my_shared_state.pending_tool_call_id = None
     my_shared_state.pending_tool_args = None
     my_shared_state.pending_tool_name = None
@@ -329,6 +361,7 @@ async def main_page(mode: str):
 
     if mode == 'niki':
         stop_voice_event.subscribe(lambda: ui.run_javascript("window.speechSynthesis.cancel();"))
+        tts_event.subscribe(lambda text, emotion: ui.run_javascript(f"window.speechSynthesis.speak(new SpeechSynthesisUtterance(`{text}`));"))
     if mode == 'admin':
         ui.button('Stop Voice', on_click=lambda: stop_voice_event.emit())
         ui.button('Clear Conversation', on_click=clear_conversation)
@@ -344,14 +377,16 @@ async def main_page(mode: str):
                 if role == 'user':
                     ui.label(f'User: {content}')
                 elif role == 'assistant':
-                    if 'tool_calls' in msg:
-                        for tool_call in msg['tool_calls']:
-                            ui.label(f'AI is calling {tool_call["function"]["name"]}...')
-                    else:
-                        prefix, stripped_content = mystrip(content or '')
+                    content = msg.get('content')
+                    if content:
+                        prefix, stripped_content = mystrip(content)
                         ui.label(f'AI ({prefix}): {stripped_content}')
                         if mode == "niki":
                             ui.run_javascript(f"window.speechSynthesis.speak(new SpeechSynthesisUtterance(`{stripped_content}`));")
+                    if 'tool_calls' in msg:
+                        for tool_call in msg['tool_calls']:
+                            if tool_call["function"]["name"] != 'text_to_speech_with_emotions':
+                                ui.label(f'AI is calling {tool_call["function"]["name"]}...')
                 elif role == 'tool':
                     result = json.loads(content)
                     if 'framing_quality' in result:
@@ -364,6 +399,8 @@ async def main_page(mode: str):
                         ui.label(f'Photo capture success: {result["capture_success"]}')
                     elif 'print_success' in result:
                         ui.label(f'Print success: {result["print_success"]}')
+                    elif 'text' in result and 'emotion' in result:
+                        ui.label(f'AI ({result["emotion"]}): {result["text"]}')
                     else:
                         ui.label(f'Tool result: {result}')
             if my_shared_state.turn == 'user' and my_shared_state.pending_tool_name == 'wait_for_user_input':
