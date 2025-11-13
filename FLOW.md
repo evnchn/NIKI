@@ -1,89 +1,117 @@
 ## Automated Photo Session Flowchart
 
+*This document outlines the high-level flow for Niki's automated photo session. It is designed to be implemented as a state machine or series of functions in `main.py`, with the AI assistant guiding the process via conversations and tool calls.*
+
+### Overall Flow
+1. **Start** → 2. **Greeting** → 3. **Framing** → 5. **Capture** → 6. **Review** → 7. **Print**
+   - Loops and fallbacks handle errors and retries.
+   - AI uses tools for camera assessment and user input waits.
+
+---
+
 ### 1. START AND DETECTION
+*Initialize and detect user presence. This could be a background loop in the AI system.*
 
-This phase focuses on initializing the environment and detecting user presence.
+- Niki is idle, scanning for presence.
+- **Decision: Presence detected?**
+  - Yes → Go to 2. Greeting
+  - No → Continue scanning (loop)
 
-1.  **Start:** Niki idle and scanning environment.
-2.  **Decision:** Detect presence?
-    *   **No:** --> Keep scanning (Loop).
-    *   **Yes:** --> Proceed to **GREETING AND ENGAGEMENT**.
-    *   *(Note: A path labeled "No after second prompt" also leads to Greeting, suggesting a secondary check or timeout mechanism before proceeding if presence isn't immediately confirmed.)*
+*Annotation: Use a sensor or camera detection tool. If no detection after timeout, proceed anyway or alert.*
+
+---
 
 ### 2. GREETING AND ENGAGEMENT
+*Initial interaction to engage users and get consent.*
 
-This phase involves initial interaction and securing user consent/acknowledgment.
+- Greet users.
+- Scan faces.
+- Say hello and prompt for engagement (e.g., "Smile for the camera!").
+- Show on-screen prompt.
+- **Decision: Engagement received?**
+  - Yes → Go to 5. Capture (skip framing if ready)
+  - No → **Decision: Timeout?**
+    - Yes → Prompt again (loop to greeting)
+    - No → Wait (loop)
 
-1.  **Step:** Greeting.
-2.  **Step:** Niki scans faces.
-3.  **Step:** Niki says hello and prompts.
-4.  **Step:** Show screen prompt.
-5.  **Decision:** Engagement received?
-    *   **Yes:** --> Proceed to **COUNTDOWN AND CAPTURE** (Bypassing further engagement checks).
-    *   **No:** --> Decision: Engagement timeout?
-        *   **Yes:** --> Prompt again (Loop back to Greeting).
-        *   **No:** --> (Implied wait/loop until timeout or engagement is received).
+*Annotation: AI speaks prompts, waits for user input via `wait_for_user_input` tool. Engagement could be voice, gesture, or button press.*
+
+---
 
 ### 3. FRAMING AND PREPARATION
+*Position and frame subjects correctly.*
 
-This phase ensures the subjects are correctly positioned and framed for the photo.
+- Detect and track faces.
+- Adjust camera settings.
+- Match faces to any submitted pictures (if applicable).
+- **Decision: All people visible and framed?**
+  - Yes → **Decision: Ready to capture?** (manual trigger or auto-detect perfect scene)
+    - Yes → Go to 5. Capture
+    - No → Continue framing (loop)
+  - No → Prompt to reposition. If repeated failures → Go to 4. Fallbacks
 
-1.  **Entry Point:** Framing and preparation.
-2.  **Parallel Processes:**
-    *   Detect and track faces.
-    *   Adjust camera and settings.
-    *   Match faces to submitted pictures.
-3.  **Decision:** Are all intended people visible?
-    *   **No:** --> Prompt to step into view. (If this fails repeatedly, it may trigger **FALLBACKS AND EDGE CASES**).
-    *   **Yes:** --> Decision: Manual activation or perfect scene?
-        *   **Yes (Manual or perfect):** --> Proceed to **COUNTDOWN AND CAPTURE**.
-        *   **No:** --> Loop back to Framing and preparation.
+*Annotation: Use `assess_camera_framing` tool to evaluate. Loop until good framing or fallback.*
+
+---
 
 ### 4. FALLBACKS AND EDGE CASES
+*Handle errors and special cases.*
 
-This section handles errors, unrecognized input, or situations requiring intervention.
+- **No faces detected (long period):** Prompt reposition or cancel session.
+- **Audio not understood:** Prompt to repeat.
+- **Printer error/out of paper:** Alert staff or save photo and end.
+- After handling, resume flow or end session.
 
-*   **Triggered by:** Failed presence detection, inability to frame correctly, or audio errors.
+*Annotation: Implement as error handlers in the state machine. May require admin intervention.*
 
-| Condition | Action(s) | Potential Outcome |
-| :--- | :--- | :--- |
-| **No faces detected for long period** | --> Prompt to reposition. | If repositioning is successful (indicated by "Yes (manual or perfect)"), proceed to **COUNTDOWN AND CAPTURE**. |
-| | --> Cancel session. | |
-| **Audio not understood** | --> Prompt to repeat. | |
-| **Printer error or out of paper** | --> Prompt to see staff. | |
-| | --> Save photo and end session. | |
+---
 
 ### 5. COUNTDOWN AND CAPTURE
+*Take the photos.*
 
-This phase handles the actual image acquisition.
+- Start countdown.
+- Announce countdown.
+- Capture photo 1.
+- Adjust focus if needed.
+- Capture photo 2.
+- Go to 6. Review
 
-1.  **Step:** Countdown.
-2.  **Step:** Niki announces countdown.
-3.  **Step:** Capture photo 1.
-4.  **Step:** Adjust and confirm focus.
-5.  **Step:** Capture photo 2.
-6.  **Transition:** --> Proceed to **REVIEW AND SELECTION**.
+*Annotation: Camera control functions. Capture multiple shots for selection.*
+
+---
 
 ### 6. REVIEW AND SELECTION
+*User reviews and selects photo.*
 
-Users review the captured images and decide on the final selection or whether to retake them.
+- Display captured photos.
+- Prompt to select favorite.
+- **Decision: Photo selected?**
+  - Yes → Go to 7. Print
+  - No → **Decision: Redo available?** (e.g., max 1 redo)
+    - Yes → Prompt for redo
+      - Yes → Go to 5. Capture
+      - No → Go to 7. Print (with default or no photo)
+    - No → Go to 7. Print
 
-1.  **Step:** Display photos for review.
-2.  **Step:** Prompt to select favorite.
-3.  **Decision:** User selects photo?
-    *   **Yes:** --> Proceed to **PRINT AND COMPLETION** (via "Print selected image").
-    *   **No or dislikes both:** --> Decision: Redo available?
-        *   **Yes (Redo used = 0):** --> Redo prompt.
-            *   **Yes:** --> Redo session (Loop back to **COUNTDOWN AND CAPTURE**).
-            *   **No (Implied decline):** --> No more redos prompt --> Proceed to **PRINT AND COMPLETION**.
-        *   **No (Redo used = 1):** --> No more redos prompt --> Proceed to **PRINT AND COMPLETION**.
+*Annotation: Use UI for display, `wait_for_user_input` for selection. Track redo count.*
+
+---
 
 ### 7. PRINT AND COMPLETION
+*Output and end session.*
 
-The final phase handles output and session termination.
+- Print selected image.
+- Provide feedback during printing.
+- Present printed photo.
+- Thank user and say goodbye.
+- Return to idle (start of flow).
 
-1.  **Step:** Print selected image.
-2.  **Step:** Printing feedback.
-3.  **Step:** Present printed photo.
-4.  **Step:** Thank you and goodbye.
-5.  **End:** Niki returns to patrol.
+*Annotation: Printer integration. End session, reset state.*
+
+---
+
+*Notes for Implementation:*
+- Use a state variable to track current phase.
+- AI responses drive the flow via tool calls.
+- Handle timeouts, errors, and user inputs gracefully.
+- Test each phase separately before integrating.
