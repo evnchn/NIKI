@@ -1,28 +1,32 @@
 import json
-from nicegui import Event, ui, binding
+from nicegui import Event, ui, app, binding, background_tasks
 from openai import AsyncAzureOpenAI
 
 from dotenv import load_dotenv
 load_dotenv()
 
-SYSTEM_PROMPT = '''You are Niki, an automated photo session assistant. Follow this flow:
+app.add_media_files('/assets', 'assets')
+
+ui.image.default_props('no-transition no-spinner')
+
+SYSTEM_PROMPT = '''You are Niki, an automated photo session assistant. Follow this flow, adapting flexibly to user responses and system states:
 
 1. Start by calling detect_presence tool.
-2. If presence detected, call text_to_speech_with_emotions to say hello and explain who you are, then call wait_for_user_input to check for user engagement.
-3. If engaged, call text_to_speech_with_emotions to tell the user to get ready for a photo shoot, then call assess_camera_framing for framing.
-4. If framing good, call text_to_speech_with_emotions to say "cheese" (or similar), then call capture_photos.
-5. If capture success, call text_to_speech_with_emotions to ask the user to select a photo, then call wait_for_user_input.
-6. If selected, call text_to_speech_with_emotions to say "I am printing the photo for you" (or similar), then call print_photo.
-7. If print success, call text_to_speech_with_emotions to say goodbye to the user. 
+2. If presence detected, call text_to_speech_with_emotions with emotion "HAPPY" to say hello and explain who you are (e.g., "Hello! I'm Niki, your friendly photo assistant. Let's take some fun pictures!"), then call wait_for_user_input to check for user engagement (expect a verbal confirmation like "yes" or "ready").
+3. If engaged, call text_to_speech_with_emotions with emotion "HAPPY" to tell the user to get ready for a photo shoot (e.g., "Great! Stand still and smile. Getting ready to take your photo!"), then call assess_camera_framing for framing.
+4. If framing is good, call text_to_speech_with_emotions with emotion "HAPPY" to say "cheese" (or similar, e.g., "Say cheese! Smile big!"), then call capture_photos.
+   - If framing is bad, retry assess_camera_framing up to 2 times. If still bad after retries, call text_to_speech_with_emotions with emotion "CONFUSED" to guide the user (e.g., "Oops, the framing isn't quite right. Please adjust your position."), then retry step 3. After 3 total attempts, end the session.
+5. If capture success, call text_to_speech_with_emotions with emotion "HAPPY" to ask the user to select a photo (e.g., "Awesome shots! Which one do you like best? Say 'first', 'second', or 'third'."), then call wait_for_user_input (expect photo selection via voice: "first", "second", "third").
+   - If capture fails, retry capture_photos up to 2 times. If still failing, call text_to_speech_with_emotions with emotion "SAD" to apologize (e.g., "Sorry, there was an issue taking the photo. Let's try again later."), then end the session.
+6. If photo selected, call text_to_speech_with_emotions with emotion "HAPPY" to say "I am printing the photo for you" (or similar, e.g., "Printing your favorite photo now!"), then call print_photo.
+   - If selection is invalid, prompt again once, then default to the first photo or end.
+7. If print success, call text_to_speech_with_emotions with emotion "HAPPY" to say goodbye to the user (e.g., "All done! Thanks for the fun photo session. Goodbye!").
+   - If print fails, retry print_photo up to 1 time. If still failing, call text_to_speech_with_emotions with emotion "SAD" to notify (e.g., "Sorry, printing failed. Your photo is saved digitally."), then proceed to goodbye.
 8. After saying goodbye, go back to step 1 for the next user.
 
-Handle timeouts and fallbacks by retrying or ending.
+For any tool calls with failing results, try up to 5 times, then gracefully handle failure with appropriate speech and end the session if needed.
 
-Keep responses short.
-
-Use tools to block for inputs. Do not assume inputs without calling tools.
-
-Before calling any tool, provide a brief response explaining what you are doing. For wait_for_user_input, specify what user input you are looking for.'''
+Keep AI responses short and tool-focused. Use tools to block for inputs—do not assume inputs without calling tools. Before calling any tool, provide a brief response explaining what you are doing (e.g., "Checking for presence..."). For wait_for_user_input, specify what input you expect (e.g., "Waiting for your confirmation...").'''
 
 client = AsyncAzureOpenAI(
     azure_deployment='gpt-4o-mini'
@@ -357,7 +361,7 @@ async def main_page(mode: str):
         await mybutton.clicked()
         mybutton.delete()
 
-    main_container = ui.column()
+    main_container = ui.column().classes('w-full')
 
     if mode == 'niki':
         stop_voice_event.subscribe(lambda: ui.run_javascript("window.speechSynthesis.cancel();"))
@@ -369,40 +373,78 @@ async def main_page(mode: str):
     def refresh():
         main_container.clear()
         with main_container:
-            for i, msg in enumerate(master_message_list):
-                if mode == "niki" and i != len(master_message_list) - 1:
-                    continue # niki mode only shows latest message
-                role = msg['role']
-                content = msg['content']
-                if role == 'user':
-                    ui.label(f'User: {content}')
-                elif role == 'assistant':
-                    content = msg.get('content')
-                    if content:
-                        prefix, stripped_content = mystrip(content)
-                        ui.label(f'AI ({prefix}): {stripped_content}')
-                        if mode == "niki":
-                            ui.run_javascript(f"window.speechSynthesis.speak(new SpeechSynthesisUtterance(`{stripped_content}`));")
-                    if 'tool_calls' in msg:
-                        for tool_call in msg['tool_calls']:
-                            if tool_call["function"]["name"] != 'text_to_speech_with_emotions':
-                                ui.label(f'AI is calling {tool_call["function"]["name"]}...')
-                elif role == 'tool':
-                    result = json.loads(content)
-                    if 'framing_quality' in result:
-                        ui.label(f'Camera framing assessed: {result["framing_quality"]} - {result["details"]}')
-                    elif 'user_input' in result:
-                        ui.label(f'User input: {result["user_input"]}')
-                    elif 'presence_detected' in result:
-                        ui.label(f'Presence detected: {result["presence_detected"]}')
-                    elif 'capture_success' in result:
-                        ui.label(f'Photo capture success: {result["capture_success"]}')
-                    elif 'print_success' in result:
-                        ui.label(f'Print success: {result["print_success"]}')
-                    elif 'text' in result and 'emotion' in result:
-                        ui.label(f'AI ({result["emotion"]}): {result["text"]}')
+            if mode != 'niki':
+                for i, msg in enumerate(master_message_list):
+                    if mode == "niki" and i != len(master_message_list) - 1:
+                        continue # niki mode only shows latest message
+                    role = msg['role']
+                    content = msg['content']
+                    if role == 'user':
+                        ui.label(f'User: {content}')
+                    elif role == 'assistant':
+                        content = msg.get('content')
+                        if content:
+                            prefix, stripped_content = mystrip(content)
+                            ui.label(f'AI ({prefix}): {stripped_content}')
+                            if mode == "niki":
+                                ui.run_javascript(f"window.speechSynthesis.speak(new SpeechSynthesisUtterance(`{stripped_content}`));")
+                        if 'tool_calls' in msg:
+                            for tool_call in msg['tool_calls']:
+                                if tool_call["function"]["name"] != 'text_to_speech_with_emotions':
+                                    ui.label(f'AI is calling {tool_call["function"]["name"]}...')
+                    elif role == 'tool':
+                        result = json.loads(content)
+                        if 'framing_quality' in result:
+                            ui.label(f'Camera framing assessed: {result["framing_quality"]} - {result["details"]}')
+                        elif 'user_input' in result:
+                            ui.label(f'User input: {result["user_input"]}')
+                        elif 'presence_detected' in result:
+                            ui.label(f'Presence detected: {result["presence_detected"]}')
+                        elif 'capture_success' in result:
+                            ui.label(f'Photo capture success: {result["capture_success"]}')
+                        elif 'print_success' in result:
+                            ui.label(f'Print success: {result["print_success"]}')
+                        elif 'text' in result and 'emotion' in result:
+                            ui.label(f'AI ({result["emotion"]}): {result["text"]}')
+                        else:
+                            ui.label(f'Tool result: {result}')
+            else:
+                # Determine if capture has happened
+                has_capture = any(msg.get('role') == 'assistant' and 'tool_calls' in msg and any(tc['function']['name'] == 'capture_photos' for tc in msg['tool_calls']) for msg in master_message_list)
+                last_tool_called = None
+                for msg in reversed(master_message_list):
+                    if msg['role'] == 'assistant' and 'tool_calls' in msg:
+                        last_tool_called = msg['tool_calls'][-1]['function']['name']
+                        break
+                last_tool_result = None
+                for msg in reversed(master_message_list):
+                    if msg['role'] == 'tool':
+                        last_tool_result = json.loads(msg['content'])
+                        break
+                if last_tool_called == 'detect_presence':
+                    ui.image('/assets/step_forward.jpeg').classes('w-full')
+                elif last_tool_called == 'wait_for_user_input':
+                    if has_capture:
+                        ui.image('/assets/choose_options.jpeg').classes('w-full')
+                        ui.button("First", on_click=lambda: handle_user_input("first"))
+                        ui.button("Second", on_click=lambda: handle_user_input("second"))
+                        ui.button("Third", on_click=lambda: handle_user_input("third"))
                     else:
-                        ui.label(f'Tool result: {result}')
+                        ui.image('/assets/username_shown.jpeg').classes('w-full')
+                        ui.button("Continue", on_click=lambda: handle_user_input("yes"))
+                        ui.button("Cancel", on_click=lambda: handle_user_input("no"))
+                elif last_tool_called == 'assess_camera_framing':
+                    ui.image('/assets/view_finder.jpeg').classes('w-full')
+                    ui.button("Cancel", on_click=lambda: handle_user_input("cancel"))
+                elif last_tool_called == 'capture_photos':
+                    ui.image('/assets/view_finder.jpeg').classes('w-full')
+                    ui.button("Cancel", on_click=lambda: handle_user_input("cancel"))
+                elif last_tool_called == 'print_photo':
+                    ui.image('/assets/printing_photo.jpeg').classes('w-full')
+                elif last_tool_result and 'print_success' in last_tool_result and last_tool_result['print_success']:
+                    ui.image('/assets/thank_you.jpeg').classes('w-full')
+                else:
+                    ui.image('/assets/idle.jpeg').classes('w-full')
             if my_shared_state.turn == 'user' and my_shared_state.pending_tool_name == 'wait_for_user_input':
                 if mode != 'niki':
                     ui.label("User's Turn")
@@ -436,6 +478,30 @@ async def main_page(mode: str):
 
     refresh()
     render_event.subscribe(refresh)
+
+@app.get('/api/state')
+def api_return_state():
+    return {
+        'master_message_list': master_message_list,
+        'turn': my_shared_state.turn,
+        'pending_tool_call_id': my_shared_state.pending_tool_call_id,
+        'pending_tool_name': my_shared_state.pending_tool_name,
+        'pending_tool_args': my_shared_state.pending_tool_args,
+    }
+
+@app.post('/api/handle_user_input')
+async def api_handle_user_input(request):
+    data = await request.json()
+    message = data.get('message', '')
+    background_tasks.create(handle_user_input(message))
+    return "Submitted to server, running AI loop right now."
+
+@app.post('/api/handle_admin_choice')
+async def api_handle_admin_choice(request):
+    data = await request.json()
+    choice = data.get('choice', '')
+    background_tasks.create(handle_admin_choice(choice))
+    return "Submitted to server, running AI loop right now."
 
 
 ui.run()
