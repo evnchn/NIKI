@@ -71,7 +71,8 @@ def login_page():
     with ui.card().classes("absolute-center"):
         username = ui.input("Username").on("keydown.enter", try_login)
         password = ui.input("Password", password=True, password_toggle_button=True).on("keydown.enter", try_login)
-        ui.button("Log in", on_click=try_login)
+        with ui.row():
+            ui.button("Log in", on_click=try_login)
     return None
 
 
@@ -106,6 +107,7 @@ camera_taking_event.subscribe(lambda: update_event_uuid("camera_taking_event"))
 
 photo_list = []
 chosen_photos = []
+ui_state_history = []
 
 if "global_username" not in app.storage.general:
     app.storage.general["global_username"] = "Guest"
@@ -124,6 +126,7 @@ ui.add_css(
 body {
     background-color: #006160;
     font-family: 'CustomFont', sans-serif;
+    height: 100vh;
 }
 """,
     shared=True,
@@ -190,6 +193,7 @@ def display_photo_selection(row_classes="w-full"):
 
 def build_niki_ui(last_tool_called, last_tool_result):
     ui_state = api_get_niki_ui(last_tool_called, last_tool_result)
+    ui_state_history.append(ui_state)
     if ui_state["type"] == "image":
         ui.image(ui_state["src"]).classes("w-full")
     elif ui_state["type"] == "display":
@@ -197,7 +201,8 @@ def build_niki_ui(last_tool_called, last_tool_result):
     elif ui_state["type"] == "photo_selection":
         display_photo_selection()
     elif ui_state["type"] == "button":
-        my_button(ui_state["text"], on_click=lambda: handle_user_input("cancel"))
+        with ui.row():
+            my_button(ui_state["text"], on_click=lambda: handle_user_input("cancel"))
 
 
 def api_get_niki_ui(last_tool_called, last_tool_result):
@@ -270,13 +275,98 @@ def display_message(msg):
 
 def build_main_ui(mode):
     last_tool_called = None
-    if mode != "niki":
+    if mode == "user":
         build_user_admin_ui()
+    elif mode == "admin":
+        build_admin_ui()
     else:
         last_tool_called, last_tool_result = get_last_tool_info()
         build_niki_ui(last_tool_called, last_tool_result)
     handle_turn_ui(mode, my_shared_state, photo_list)
     return last_tool_called
+
+
+def build_admin_ui():
+    last_tool_called, last_tool_result = get_last_tool_info()
+    ui_state = api_get_niki_ui(last_tool_called, last_tool_result)
+
+    # State steps
+    states_order = [
+        "IDLE",
+        "DETECT_PRESENCE",
+        "WAIT_FOR_USER_ENGAGEMENT",
+        "THINKING",
+        "CAPTURE_PHOTOS",
+        "WAIT_FOR_USER_CHOOSE_PHOTO",
+        "PRINT_PHOTO",
+        "PRINT_SUCCESS",
+        "GOODBYE",
+    ]
+    state_icons = {
+        "IDLE": "😴",
+        "DETECT_PRESENCE": "👀",
+        "THINKING": "🤔",
+        "WAIT_FOR_USER_ENGAGEMENT": "👋",
+        "CAPTURE_PHOTOS": "📸",
+        "WAIT_FOR_USER_CHOOSE_PHOTO": "🖼️",
+        "PRINT_PHOTO": "🖨️",
+        "PRINT_SUCCESS": "✅",
+        "GOODBYE": "👋",
+    }
+    current_state = ui_state.get("state", "IDLE")
+    current_index = states_order.index(current_state) if current_state in states_order else -1
+
+    # Top row: state display on left, global username on right
+    with ui.row().classes("w-full"):
+        # Left: state display
+        with ui.column().classes("flex-grow"):
+            with ui.row().classes("w-full"):
+                for i, state in enumerate(states_order):
+                    icon = state_icons.get(state, "❓")
+                    label = ui.label(icon).classes("text-2xl mx-2")
+                    if i <= current_index:
+                        label.classes("text-white")
+                    else:
+                        label.classes("text-white opacity-10")
+        # Right: global username
+        with ui.column():
+            with ui.row():
+                global_username_input = (
+                    ui.input("Global Username", value=app.storage.general["global_username"])
+                    .props("dark")
+                    .classes("flex-grow")
+                )
+
+                def update_global_username():
+                    app.storage.general["global_username"] = global_username_input.value
+                    render_event.emit()
+
+                my_button("Update Global Username", on_click=update_global_username)
+
+    # # Previous UI States
+    # with ui.column().classes("w-full mt-4"):
+    #     ui.label("Previous UI States:").classes("text-white text-lg")
+    #     for prev in reversed(ui_state_history[-10:]):
+    #         with ui.expansion(f"State: {prev.get('state', 'unknown')}", icon="info").classes("text-white bg-gray-800"):
+    #             for k, v in prev.items():
+    #                 ui.label(f"{k}: {v}").classes("text-white")
+
+    # Conversation Messages
+    with ui.column().classes("w-full mt-4"):
+        with ui.element("div").classes("conversation-scroll"):
+            columns = [
+                {"name": "role", "label": "Role", "field": "role", "align": "left"},
+                {"name": "content", "label": "Message", "field": "content", "align": "left"},
+            ]
+            rows = []
+            for msg in master_message_list:
+                content = msg.get("content", "")
+                if msg["role"] == "assistant" and "tool_calls" in msg:
+                    tool_names = [tc["function"]["name"] for tc in msg["tool_calls"]]
+                    tool_str = f" (tool calls: {tool_names})"
+                    content = f"{content}{tool_str}" if content else tool_str
+                rows.append({"role": msg["role"], "content": content})
+            ui.table(columns=columns, rows=rows).props("wrap-cells").classes("w-full text-white bg-gray-800")
 
 
 def build_user_admin_ui():
@@ -288,30 +378,33 @@ def handle_turn_ui(mode, my_shared_state, photo_list):
     if my_shared_state.turn == "user" and my_shared_state.pending_tool_name == "wait_for_user_engagement":
         if mode in ("user", "admin"):
             ui.label("User's Turn: Confirm Engagement")
-            my_button("Yes", on_click=lambda: handle_user_input("yes", my_shared_state))
-            my_button("No", on_click=lambda: handle_user_input("no", my_shared_state))
+            with ui.row():
+                my_button("Yes", on_click=lambda: handle_user_input("yes", my_shared_state))
+                my_button("No", on_click=lambda: handle_user_input("no", my_shared_state))
     elif my_shared_state.turn == "user" and my_shared_state.pending_tool_name == "wait_for_user_choose_photo":
         display_photo_selection("")
     elif my_shared_state.turn == "admin" and my_shared_state.pending_tool_name:
         button_and_responses = get_button_and_responses_from_tool_call(my_shared_state.pending_tool_name, photo_list)
         if mode == "admin":
             ui.label(f"Admin: Choose for {my_shared_state.pending_tool_name}")
-            for button_text, response in button_and_responses.items():
-                my_button(
-                    button_text,
-                    on_click=lambda r=response: handle_user_input(r, my_shared_state),
-                )
-            if my_shared_state.pending_tool_name == "capture_photos":
-                my_button("Capture Photo", on_click=camera_taking_event.emit)
-                my_button(
-                    "Say cheese",
-                    on_click=lambda: play_tts("Say cheese! Smile big!", "HAPPY"),
-                )
-                my_button("3 2 1", on_click=lambda: play_tts("3 2 1", "HAPPY"))
+            with ui.row():
+                for button_text, response in button_and_responses.items():
+                    my_button(
+                        button_text,
+                        on_click=lambda r=response: handle_user_input(r, my_shared_state),
+                    )
+                if my_shared_state.pending_tool_name == "capture_photos":
+                    my_button("Capture Photo", on_click=camera_taking_event.emit)
+                    my_button(
+                        "Say cheese",
+                        on_click=lambda: play_tts("Say cheese! Smile big!", "HAPPY"),
+                    )
+                    my_button("3 2 1", on_click=lambda: play_tts("3 2 1", "HAPPY"))
         else:
             ui.label(f"Waiting for admin to handle {my_shared_state.pending_tool_name}...")
     elif len(master_message_list) == 1 and mode in ("user", "admin"):
-        my_button("Start Conversation", on_click=lambda: AIloop(my_shared_state))
+        with ui.row():
+            my_button("Start Conversation", on_click=lambda: AIloop(my_shared_state))
     else:
         ui.label("AI is thinking...")
         ui.label("Debug:")
@@ -346,20 +439,9 @@ async def main_page(mode: str):
         )
         camera_taking_event.subscribe(cam.capture)
     if mode == "admin":
-        my_button("Stop Voice", on_click=lambda: stop_voice_event.emit())
-        my_button("Clear Conversation", on_click=lambda: clear_conversation(my_shared_state))
-        with ui.row().classes("w-full"):
-            global_username_input = (
-                ui.input("Global Username", value=app.storage.general["global_username"])
-                .props("dark")
-                .classes("flex-grow")
-            )
-
-            def update_global_username():
-                app.storage.general["global_username"] = global_username_input.value
-                render_event.emit()
-
-            my_button("Update Global Username", on_click=update_global_username)
+        with ui.row():
+            my_button("Stop Voice", on_click=lambda: stop_voice_event.emit())
+            my_button("Clear Conversation", on_click=lambda: clear_conversation(my_shared_state))
 
         async def handle_interrupt(interrupt_text):
             # if there is a tool call then handle_user_input with interrupt:
@@ -391,6 +473,11 @@ async def main_page(mode: str):
             cam.set_visibility(True)
         else:
             cam.set_visibility(False)
+
+        if mode == "admin":
+            ui.run_javascript(
+                "setTimeout(() => { const el = document.querySelector('.conversation-scroll'); if (el) el.scrollTop = el.scrollHeight; }, 100);"
+            )
 
     refresh()
     render_event.subscribe(refresh)
@@ -475,7 +562,8 @@ def download_photo():
 @ui.page("/test/camera")
 def test_camera_page():
     cam = camera().classes("w-full")
-    ui.button("Capture", on_click=lambda: cam.capture())
+    with ui.row():
+        ui.button("Capture", on_click=lambda: cam.capture())
 
 
 ui.run(port=11011, show=False, storage_secret=os.environ["STORAGE_SECRET"])
