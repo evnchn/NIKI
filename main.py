@@ -1,6 +1,7 @@
 import json
 from time import time
 from fastapi import Request
+from fastapi.responses import FileResponse
 from nicegui import Event, ui, app, binding, background_tasks
 from openai import AsyncAzureOpenAI
 
@@ -14,6 +15,14 @@ import base64
 from camera import camera
 
 app.add_media_files('/assets', 'assets')
+app.add_media_files('/user_photos', 'user_photos')
+app.add_media_files('/chosen_photos', 'chosen_photos')
+
+photo_list = []
+chosen_photos = []
+
+if not os.path.exists('chosen_photos'):
+    os.makedirs('chosen_photos')
 
 ui.add_css("""
 body {
@@ -37,7 +46,7 @@ SYSTEM_PROMPT = '''You are Niki, an automated photo session assistant. Follow th
 3. If engaged, call text_to_speech_with_emotions with emotion "HAPPY" to tell the user to get ready for a photo shoot (e.g., "Great! Stand still and smile. Getting ready to take your photo!"), then call assess_camera_framing for framing.
 4. If framing is good, call text_to_speech_with_emotions with emotion "HAPPY" to say "cheese" (or similar, e.g., "Say cheese! Smile big!"), then call capture_photos.
    - If framing is bad, retry assess_camera_framing up to 2 times. If still bad after retries, call text_to_speech_with_emotions with emotion "CONFUSED" to guide the user (e.g., "Oops, the framing isn't quite right. Please adjust your position."), then retry step 3. After 3 total attempts, end the session.
-5. If capture success, call text_to_speech_with_emotions with emotion "HAPPY" to ask the user to select a photo (e.g., "Awesome shots! Which one do you like best? Say 'first', 'second', or 'third'."), then call wait_for_user_input (expect photo selection via voice: "first", "second", "third").
+5. If capture success, call text_to_speech_with_emotions with emotion "HAPPY" to ask the user to select a photo (e.g., "Awesome shots! Which one do you like best? Say 'first', 'second', or 'third'."), then call wait_for_user_choose_photo (expect photo selection via voice: "first", "second", "third").
    - If capture fails, retry capture_photos up to 2 times. If still failing, call text_to_speech_with_emotions with emotion "SAD" to apologize (e.g., "Sorry, there was an issue taking the photo. Let's try again later."), then end the session.
 6. If photo selected, call text_to_speech_with_emotions with emotion "HAPPY" to say "I am printing the photo for you" (or similar, e.g., "Printing your favorite photo now!"), then call print_photo.
    - If selection is invalid, prompt again once, then default to the first photo or end.
@@ -47,7 +56,7 @@ SYSTEM_PROMPT = '''You are Niki, an automated photo session assistant. Follow th
 
 For any tool calls with failing results, try up to 5 times, then gracefully handle failure with appropriate speech and end the session if needed.
 
-Keep AI responses short and tool-focused. Use tools to block for inputs—do not assume inputs without calling tools. Before calling any tool, provide a brief response explaining what you are doing (e.g., "Checking for presence..."). For wait_for_user_input, specify what input you expect (e.g., "Waiting for your confirmation...").'''
+Keep AI responses short and tool-focused. Use tools to block for inputs—do not assume inputs without calling tools. Before calling any tool, provide a brief response explaining what you are doing (e.g., "Checking for presence..."). For wait_for_user_input, specify what input you expect (e.g., "Waiting for your confirmation..."). For wait_for_user_choose_photo, always respond positively about the choice.'''
 
 client = AsyncAzureOpenAI(
     azure_deployment='gpt-4o-mini'
@@ -56,6 +65,8 @@ client = AsyncAzureOpenAI(
 emotions = ['HAPPY', 'SAD', 'CONFUSED']
 
 latest_tts_path = None
+
+capture_done = False
 
 def generate_tts(text, emotion=None):
     global latest_tts_path
@@ -113,6 +124,25 @@ tools = [
         "function": {
             "name": "wait_for_user_input",
             "description": "Wait for the user to provide input before continuing the conversation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "random_nonce": {
+                        "type": "string",
+                        "description": "A random nonce to ensure uniqueness of the request."
+                    },
+                },
+                "required": ["random_nonce"],
+                "additionalProperties": False,
+            },
+            'strict': True,
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "wait_for_user_choose_photo",
+            "description": "Wait for the user to choose a photo from the captured photos.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -219,6 +249,8 @@ def get_button_and_responses_from_tool_call(tool_name):
         return {'Captured': 'yes', 'Failed': 'no'}
     elif tool_name == 'print_photo':
         return {'Printed': 'yes', 'Failed': 'no'}
+    elif tool_name == 'wait_for_user_choose_photo':
+        return {'First': 'first', 'Second': 'second', 'Third': 'third'}
     else:
         return {}
 
@@ -289,6 +321,14 @@ async def AIloop():
                     tool_calls_handled = True
                     agent_continue = False
                     break
+                elif tool_name == 'wait_for_user_choose_photo':
+                    my_shared_state.pending_tool_call_id = tool_call.id
+                    my_shared_state.pending_tool_args = tool_args
+                    my_shared_state.pending_tool_name = tool_name
+                    my_shared_state.turn = 'user'
+                    tool_calls_handled = True
+                    agent_continue = False
+                    break
                 elif tool_name in ['detect_presence', 'capture_photos', 'print_photo']:
                     my_shared_state.pending_tool_call_id = tool_call.id
                     my_shared_state.pending_tool_args = tool_args
@@ -340,6 +380,11 @@ async def handle_user_input(message: str):
                 "user_input": message,
                 "random_nonce": random_nonce
             })
+        elif my_shared_state.pending_tool_name == 'wait_for_user_choose_photo':
+            content = json.dumps({
+                "chosen_photo": message,
+                "random_nonce": random_nonce
+            })
         elif my_shared_state.pending_tool_name == 'assess_camera_framing':
             details = {
                 "good": "The subject is well-centered with appropriate headroom and balanced composition.",
@@ -378,6 +423,14 @@ async def handle_user_input(message: str):
                 "content": content
             }
         )
+        # Handle photo selection
+        if my_shared_state.pending_tool_name == 'wait_for_user_choose_photo' and message in ['first', 'second', 'third']:
+            index = {'first': 0, 'second': 1, 'third': 2}[message]
+            if index < len(photo_list):
+                src = photo_list[index]
+                dst = os.path.join('chosen_photos', os.path.basename(src))
+                os.rename(src, dst)
+                chosen_photos.append(dst)
         my_shared_state.pending_tool_call_id = None
         my_shared_state.pending_tool_args = None
         my_shared_state.pending_tool_name = None
@@ -386,11 +439,15 @@ async def handle_user_input(message: str):
     await AIloop()
 
 def clear_conversation():
+    global capture_done
     master_message_list.clear()
     master_message_list.append({'role': 'system', 'content': SYSTEM_PROMPT})
     my_shared_state.pending_tool_call_id = None
     my_shared_state.pending_tool_args = None
     my_shared_state.pending_tool_name = None
+    photo_list.clear()
+    chosen_photos.clear()
+    capture_done = False
     render_event.emit()
 
 @ui.page('/')
@@ -405,6 +462,10 @@ async def main_page(mode: str):
         await mybutton.clicked()
         mybutton.delete()
 
+    global capture_done
+    cam = camera().classes('w-full')
+    cam.set_visibility(False)
+
     main_container = ui.column().classes('w-full')
 
     if mode == 'niki':
@@ -415,6 +476,8 @@ async def main_page(mode: str):
         my_button('Clear Conversation', on_click=clear_conversation)
 
     def refresh():
+        global capture_done
+        last_tool_called = None
         main_container.clear()
         with main_container:
             if mode != 'niki':
@@ -442,6 +505,8 @@ async def main_page(mode: str):
                             ui.label(f'Camera framing assessed: {result["framing_quality"]} - {result["details"]}')
                         elif 'user_input' in result:
                             ui.label(f'User input: {result["user_input"]}')
+                        elif 'chosen_photo' in result:
+                            ui.label(f'Chosen photo: {result["chosen_photo"]}')
                         elif 'presence_detected' in result:
                             ui.label(f'Presence detected: {result["presence_detected"]}')
                         elif 'capture_success' in result:
@@ -473,22 +538,16 @@ async def main_page(mode: str):
                     ui.image('/assets/thank_you.jpeg').classes('w-full')
                 elif last_tool_called == 'detect_presence':
                     ui.image('/assets/step_forward.jpeg').classes('w-full')
-                elif last_tool_called == 'wait_for_user_input':
-                    if has_capture:
-                        ui.image('/assets/choose_options.jpeg').classes('w-full')
-                        my_button("First", on_click=lambda: handle_user_input("first"))
-                        my_button("Second", on_click=lambda: handle_user_input("second"))
-                        my_button("Third", on_click=lambda: handle_user_input("third"))
-                    else:
-                        ui.image('/assets/username_shown.jpeg').classes('w-full')
-                        my_button("Continue", on_click=lambda: handle_user_input("yes"))
-                        my_button("Cancel", on_click=lambda: handle_user_input("no"))
+                elif last_tool_called == 'wait_for_user_choose_photo':
+                    with ui.row():
+                        for photo in photo_list:
+                            ui.image(f'/user_photos/{os.path.basename(photo)}').classes('w-1/3')
+                    my_button("First", on_click=lambda: handle_user_input("first"))
+                    my_button("Second", on_click=lambda: handle_user_input("second"))
+                    my_button("Third", on_click=lambda: handle_user_input("third"))
                 elif last_tool_called == 'assess_camera_framing':
-                    camera().classes('w-full')
                     my_button("Cancel", on_click=lambda: handle_user_input("cancel"))
                 elif last_tool_called == 'capture_photos':
-                    cam = camera().classes('w-full')
-                    cam.capture()
                     my_button("Cancel", on_click=lambda: handle_user_input("cancel"))
                 elif last_tool_called == 'print_photo':
                     ui.image('/assets/printing_photo.jpeg').classes('w-full')
@@ -500,6 +559,14 @@ async def main_page(mode: str):
                     user_input = ui.input(placeholder='Type your message...')
                     my_button('Send', on_click=lambda: handle_user_input(
                         user_input.value))
+            elif my_shared_state.turn == 'user' and my_shared_state.pending_tool_name == 'wait_for_user_choose_photo':
+                with ui.row():
+                    ui.label(str(photo_list))
+                    for photo in photo_list:
+                        ui.image(f'/user_photos/{os.path.basename(photo)}').classes('w-1/3')
+                my_button("First", on_click=lambda: handle_user_input("first"))
+                my_button("Second", on_click=lambda: handle_user_input("second"))
+                my_button("Third", on_click=lambda: handle_user_input("third"))
             elif my_shared_state.turn == 'admin' and my_shared_state.pending_tool_name:
                 button_and_responses = get_button_and_responses_from_tool_call(my_shared_state.pending_tool_name)
                 if mode == 'admin':
@@ -512,6 +579,14 @@ async def main_page(mode: str):
                 my_button('Start Conversation', on_click=AIloop)
             else:
                 ui.label("AI is thinking...")
+
+        if last_tool_called in ['assess_camera_framing', 'capture_photos']:
+            cam.set_visibility(True)
+            if last_tool_called == 'capture_photos' and not capture_done:
+                cam.capture()
+                capture_done = True
+        else:
+            cam.set_visibility(False)
 
     refresh()
     render_event.subscribe(refresh)
@@ -540,6 +615,7 @@ async def api_handle_user_input(request: Request):
 async def save_photo(request: Request):
     data = await request.json()
     image_data = data['b64url']
+    print("image_data preview:", image_data[:30], "...")
     header, encoded = image_data.split(',', 1)
     if header == 'data:image/jpeg;base64' or header == 'data:image/jpg;base64':
         filetype = 'jpg'
@@ -548,10 +624,22 @@ async def save_photo(request: Request):
     image_bytes = base64.b64decode(encoded)
     os.makedirs('user_photos', exist_ok=True)
     filename = f"user_photos/photo_{int(time())}.{filetype}"
+    photo_list.append(filename)
     with open(filename, 'wb') as f:
         f.write(image_bytes)
     return {"success": True, "filename": filename}
 
+@ui.page('/xiaomicam/photo')
+def download_photo():
+    # show all chosen photos for download
+    with ui.column():
+        if chosen_photos:
+            for photo in chosen_photos:
+                ui.image(f'/chosen_photos/{os.path.basename(photo)}').classes('w-1/3')
+                ui.label(f'Download {os.path.basename(photo)}:')
+                ui.link(f'/chosen_photos/{os.path.basename(photo)}', f'/chosen_photos/{os.path.basename(photo)}')
+        else:
+            ui.label('No chosen photos available for download.')
 
 @ui.page("/test/camera")
 def test_camera_page():
