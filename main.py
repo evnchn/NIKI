@@ -56,7 +56,7 @@ def generate_tts(text, emotion=None):
 
 def play_tts(text, emotion=None):
     media_path = generate_tts(text, emotion)
-    ui.run_javascript(f"var audio = new Audio('{media_path}'); audio.play();")
+    ui.run_javascript(f"window.currentAudio = new Audio('{media_path}'); window.currentAudio.play();")
 
 def strip_emotion_suffix(response: str) -> str:
     for emotion in emotions:
@@ -389,6 +389,7 @@ async def main_page(mode: str):
 
     if mode == 'niki':
         tts_event.subscribe(lambda text, emotion: play_tts(text, emotion))
+        stop_voice_event.subscribe(lambda: ui.run_javascript("if (window.currentAudio) { window.currentAudio.pause(); window.currentAudio.currentTime = 0; }"))
     if mode == 'admin':
         ui.button('Stop Voice', on_click=lambda: stop_voice_event.emit())
         ui.button('Clear Conversation', on_click=clear_conversation)
