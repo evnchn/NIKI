@@ -3,6 +3,8 @@ tts/
 user_photos/
 chosen_photos/
 
+.nicegui/
+
 .debug.json
 
 # Byte-compiled / optimized / DLL files
