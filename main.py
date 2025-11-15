@@ -25,8 +25,13 @@ if not os.path.exists('chosen_photos'):
     os.makedirs('chosen_photos')
 
 ui.add_css("""
+@font-face {
+    font-family: 'CustomFont';
+    src: url('/assets/font.ttf') format('truetype');
+}
 body {
     background-color: #006160;
+    font-family: 'CustomFont', sans-serif;
 }
 """, shared=True)
 ui.label.default_classes("text-white")
@@ -43,16 +48,14 @@ SYSTEM_PROMPT = '''You are Niki, an automated photo session assistant. Follow th
 
 1. Start by calling detect_presence tool.
 2. If presence detected, call text_to_speech_with_emotions with emotion "HAPPY" to say hello and explain who you are (e.g., "Hello! I'm Niki, your friendly photo assistant. Let's take some fun pictures!"), then call wait_for_user_input to check for user engagement (expect a verbal confirmation like "yes" or "ready").
-3. If engaged, call text_to_speech_with_emotions with emotion "HAPPY" to tell the user to get ready for a photo shoot (e.g., "Great! Stand still and smile. Getting ready to take your photo!"), then call assess_camera_framing for framing.
-4. If framing is good, call text_to_speech_with_emotions with emotion "HAPPY" to say "cheese" (or similar, e.g., "Say cheese! Smile big!"), then call capture_photos.
-   - If framing is bad, retry assess_camera_framing up to 2 times. If still bad after retries, call text_to_speech_with_emotions with emotion "CONFUSED" to guide the user (e.g., "Oops, the framing isn't quite right. Please adjust your position."), then retry step 3. After 3 total attempts, end the session.
-5. If capture success, call text_to_speech_with_emotions with emotion "HAPPY" to ask the user to select a photo (e.g., "Awesome shots! Which one do you like best? Click on your favorite photo."), then call wait_for_user_choose_photo (expect photo selection via click: index 0, 1, 2, etc.).
+3. If engaged, call text_to_speech_with_emotions with emotion "HAPPY" to tell the user to get ready for a photo shoot (e.g., "Great! Simply move into camera, and I will take the photos for you at the right moment!"), then call capture_photos.
+4. If capture success, call text_to_speech_with_emotions with emotion "HAPPY" to ask the user to select a photo (e.g., "Awesome shots! Which one do you like best? Click on your favorite photo."), then call wait_for_user_choose_photo (expect photo selection via click: index 0, 1, 2, etc.).
    - If capture fails, retry capture_photos up to 2 times. If still failing, call text_to_speech_with_emotions with emotion "SAD" to apologize (e.g., "Sorry, there was an issue taking the photo. Let's try again later."), then end the session.
-6. If photo selected, call text_to_speech_with_emotions with emotion "HAPPY" to say "I am printing the photo for you" (or similar, e.g., "Printing your favorite photo now!"), then call print_photo.
+5. If photo selected, call text_to_speech_with_emotions with emotion "HAPPY" to say "I am printing the photo for you" (or similar, e.g., "Printing your favorite photo now!"), then call print_photo.
    - If selection is invalid, prompt again once, then default to the first photo or end.
-7. If print success, call text_to_speech_with_emotions with emotion "HAPPY" to say goodbye to the user (e.g., "All done! Thanks for the fun photo session. Goodbye!").
+6. If print success, call text_to_speech_with_emotions with emotion "HAPPY" to say goodbye to the user (e.g., "All done! Thanks for the fun photo session. Goodbye!").
    - If print fails, retry print_photo up to 1 time. If still failing, call text_to_speech_with_emotions with emotion "SAD" to notify (e.g., "Sorry, printing failed. Your photo is saved digitally."), then proceed to goodbye.
-8. After saying goodbye, go back to step 1 for the next user.
+7. After saying goodbye, go back to step 1 for the next user.
 
 For any tool calls with failing results, try up to 5 times, then gracefully handle failure with appropriate speech and end the session if needed.
 
@@ -100,25 +103,6 @@ def mystrip(response: str) -> str:
     return prefix, strip_bad_starting_characters(stripped_response)
 
 tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "assess_camera_framing",
-            "description": "Check if the camera framing is good for taking a portrait photo.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "random_nonce": {
-                        "type": "string",
-                        "description": "A random nonce to ensure uniqueness of the request."
-                    },
-                },
-                "required": ["random_nonce"],
-                "additionalProperties": False,
-            },
-            'strict': True,
-        },
-    },
     {
         "type": "function",
         "function": {
@@ -241,9 +225,7 @@ tools = [
 ]
 
 def get_button_and_responses_from_tool_call(tool_name):
-    if tool_name == 'assess_camera_framing':
-        return {'Good Framing': 'good', 'Bad Framing': 'bad'}
-    elif tool_name == 'detect_presence':
+    if tool_name == 'detect_presence':
         return {'Yes': 'yes', 'No': 'no'}
     elif tool_name == 'capture_photos':
         return {'Captured': 'yes', 'Failed': 'no'}
@@ -266,6 +248,8 @@ render_event = Event()
 stop_voice_event = Event()
 
 tts_event = Event()
+
+camera_taking_event = Event()
 
 
 class SharedState:
@@ -305,15 +289,7 @@ async def AIloop():
             for tool_call in result.choices[0].message.tool_calls:
                 tool_name = tool_call.function.name
                 tool_args = tool_call.function.arguments
-                if tool_name == 'assess_camera_framing':
-                    my_shared_state.pending_tool_call_id = tool_call.id
-                    my_shared_state.pending_tool_args = tool_args
-                    my_shared_state.pending_tool_name = tool_name
-                    my_shared_state.turn = 'admin'
-                    tool_calls_handled = True
-                    agent_continue = False
-                    break
-                elif tool_name == 'wait_for_user_input':
+                if tool_name == 'wait_for_user_input':
                     my_shared_state.pending_tool_call_id = tool_call.id
                     my_shared_state.pending_tool_args = tool_args
                     my_shared_state.pending_tool_name = tool_name
@@ -383,16 +359,6 @@ async def handle_user_input(message: str):
         elif my_shared_state.pending_tool_name == 'wait_for_user_choose_photo':
             content = json.dumps({
                 "chosen_photo": message,
-                "random_nonce": random_nonce
-            })
-        elif my_shared_state.pending_tool_name == 'assess_camera_framing':
-            details = {
-                "good": "The subject is well-centered with appropriate headroom and balanced composition.",
-                "bad": "The subject is off-center with poor headroom and unbalanced composition."
-            }.get(message, "Unknown quality")
-            content = json.dumps({
-                "framing_quality": message,
-                "details": details,
                 "random_nonce": random_nonce
             })
         elif my_shared_state.pending_tool_name == 'detect_presence':
@@ -469,11 +435,17 @@ async def main_page(mode: str):
     cam = camera().classes('w-full')
     cam.set_visibility(False)
 
+    def trigger_capture():
+        global capture_done
+        cam.capture()
+        capture_done = True
+
     main_container = ui.column().classes('w-full')
 
     if mode == 'niki':
         tts_event.subscribe(lambda text, emotion: play_tts(text, emotion))
         stop_voice_event.subscribe(lambda: ui.run_javascript("if (window.currentAudio) { window.currentAudio.pause(); window.currentAudio.currentTime = 0; }"))
+        camera_taking_event.subscribe(trigger_capture)
     if mode == 'admin':
         my_button('Stop Voice', on_click=lambda: stop_voice_event.emit())
         my_button('Clear Conversation', on_click=clear_conversation)
@@ -546,8 +518,6 @@ async def main_page(mode: str):
                         for i, photo in enumerate(photo_list):
                             img = ui.image(f'/user_photos/{os.path.basename(photo)}').classes('w-1/3')
                             img.on('click', lambda e, i=i: handle_user_input(str(i)))
-                elif last_tool_called == 'assess_camera_framing':
-                    my_button("Cancel", on_click=lambda: handle_user_input("cancel"))
                 elif last_tool_called == 'capture_photos':
                     my_button("Cancel", on_click=lambda: handle_user_input("cancel"))
                 elif last_tool_called == 'print_photo':
@@ -571,6 +541,10 @@ async def main_page(mode: str):
                     ui.label(f"Admin: Choose for {my_shared_state.pending_tool_name}")
                     for button_text, response in button_and_responses.items():
                         my_button(button_text, on_click=lambda r=response: handle_user_input(r))
+                    if my_shared_state.pending_tool_name == 'capture_photos':
+                        my_button("Capture Photo", on_click=camera_taking_event.emit)
+                        my_button("Say cheese", on_click=lambda: play_tts("Say cheese! Smile big!", "HAPPY"))
+                        my_button("3 2 1", on_click=lambda: play_tts("3 2 1", "HAPPY"))
                 else:
                     ui.label(f"Waiting for admin to handle {my_shared_state.pending_tool_name}...")
             elif len(master_message_list) == 1 and mode in ('user', 'admin'):
@@ -578,11 +552,8 @@ async def main_page(mode: str):
             else:
                 ui.label("AI is thinking...")
 
-        if last_tool_called in ['assess_camera_framing', 'capture_photos']:
+        if last_tool_called in ['capture_photos']:
             cam.set_visibility(True)
-            if last_tool_called == 'capture_photos' and not capture_done:
-                cam.capture()
-                capture_done = True
         else:
             cam.set_visibility(False)
 
