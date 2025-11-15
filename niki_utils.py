@@ -1,5 +1,7 @@
 """Small reusable helper utilities extracted for DRYness."""
 
+from nicegui import ui
+
 
 def strip_emotion_suffix(response: str, emotions: list[str] | None = None) -> tuple[str, str]:
     """If a response ends with a known emotion token, return (emotion, stripped_response).
@@ -24,6 +26,18 @@ def strip_bad_starting_characters(response: str) -> str:
 def mystrip(response: str, emotions: list[str] | None = None) -> tuple[str, str]:
     prefix, stripped_response = strip_emotion_suffix(response, emotions=emotions)
     return prefix, strip_bad_starting_characters(stripped_response)
+
+
+def my_button(text, *, on_click=None):
+    return ui.button(text, color="white", on_click=on_click).classes("text-[#006160]")
+
+
+def mydisplay(line1, line2):
+    with ui.column().classes("aspect-3/2 w-full items-center"):
+        ui.space()
+        ui.label(line1).classes("text-6xl")
+        ui.label(line2).classes("text-3xl")
+        ui.space()
 
 
 def get_button_and_responses_from_tool_call(tool_name: str, photo_list: list[str] | None = None) -> dict[str, str]:

@@ -12,7 +12,7 @@ from sse_starlette.sse import EventSourceResponse
 
 import tts
 from camera import camera
-from niki_utils import get_button_and_responses_from_tool_call, mystrip
+from niki_utils import get_button_and_responses_from_tool_call, my_button, mydisplay, mystrip
 from photos import process_and_save_photo
 from tts import play_tts
 
@@ -69,10 +69,6 @@ body {
 ui.label.default_classes("text-white")
 
 
-def my_button(text, *, on_click=None):
-    return ui.button(text, color="white", on_click=on_click).classes("text-[#006160]")
-
-
 if not os.path.exists("tts"):
     os.makedirs("tts")
 
@@ -101,14 +97,6 @@ emotions = ["HAPPY", "SAD", "CONFUSED"]
 
 
 ## Helper functions moved to `niki_utils.py` to reduce duplication and centralize behavior.
-
-
-def mydisplay(line1, line2):
-    with ui.column().classes("aspect-3/2 w-full items-center"):
-        ui.space()
-        ui.label(line1).classes("text-6xl")
-        ui.label(line2).classes("text-3xl")
-        ui.space()
 
 
 tools = [
