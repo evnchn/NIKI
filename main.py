@@ -99,18 +99,16 @@ render_event.subscribe(lambda: print(f"Turn changed to: {my_shared_state.turn}")
 
 def get_last_tool_info():
     last_tool_called = None
+    last_tool_result = None
     for msg in reversed(master_message_list):
-        if msg["role"] == "assistant" and "tool_calls" in msg:
+        if msg["role"] == "tool" and last_tool_result is None:
+            last_tool_result = json.loads(msg["content"])
+        elif msg["role"] == "assistant" and "tool_calls" in msg and last_tool_called is None:
             for tc in reversed(msg["tool_calls"]):
                 if tc["function"]["name"] != "text_to_speech_with_emotions":
                     last_tool_called = tc["function"]["name"]
                     break
-            if last_tool_called:
-                break
-    last_tool_result = None
-    for msg in reversed(master_message_list):
-        if msg["role"] == "tool":
-            last_tool_result = json.loads(msg["content"])
+        if last_tool_called is not None and last_tool_result is not None:
             break
     return last_tool_called, last_tool_result
 
@@ -139,39 +137,43 @@ def build_niki_ui(last_tool_called, last_tool_result):
         mydisplay("(ᴗ˳ᴗ)ᶻ𝗓𐰁 .ᐟ", "Idle...")
 
 
+def display_message(msg):
+    role = msg["role"]
+    content = msg["content"]
+    if role == "user":
+        ui.label(f"User: {content}")
+    elif role == "assistant":
+        content = msg.get("content")
+        if content:
+            prefix, stripped_content = mystrip(content)
+            ui.label(f"AI ({prefix}): {stripped_content}")
+        if "tool_calls" in msg:
+            for tool_call in msg["tool_calls"]:
+                if tool_call["function"]["name"] != "text_to_speech_with_emotions":
+                    ui.label(f"AI is calling {tool_call['function']['name']}...")
+    elif role == "tool":
+        result = json.loads(content)
+        if "framing_quality" in result:
+            ui.label(f"Camera framing assessed: {result['framing_quality']} - {result['details']}")
+        elif "engagement" in result:
+            ui.label(f"User engagement: {result['engagement']}")
+        elif "chosen_photo" in result:
+            ui.label(f"Chosen photo: {result['chosen_photo']}")
+        elif "presence_detected" in result:
+            ui.label(f"Presence detected: {result['presence_detected']}")
+        elif "capture_success" in result:
+            ui.label(f"Photo capture success: {result['capture_success']}")
+        elif "print_success" in result:
+            ui.label(f"Print success: {result['print_success']}")
+        elif "text" in result and "emotion" in result:
+            ui.label(f"AI ({result['emotion']}): {result['text']}")
+        else:
+            ui.label(f"Tool result: {result}")
+
+
 def build_user_admin_ui(mode):
     for msg in master_message_list:
-        role = msg["role"]
-        content = msg["content"]
-        if role == "user":
-            ui.label(f"User: {content}")
-        elif role == "assistant":
-            content = msg.get("content")
-            if content:
-                prefix, stripped_content = mystrip(content)
-                ui.label(f"AI ({prefix}): {stripped_content}")
-            if "tool_calls" in msg:
-                for tool_call in msg["tool_calls"]:
-                    if tool_call["function"]["name"] != "text_to_speech_with_emotions":
-                        ui.label(f"AI is calling {tool_call['function']['name']}...")
-        elif role == "tool":
-            result = json.loads(content)
-            if "framing_quality" in result:
-                ui.label(f"Camera framing assessed: {result['framing_quality']} - {result['details']}")
-            elif "engagement" in result:
-                ui.label(f"User engagement: {result['engagement']}")
-            elif "chosen_photo" in result:
-                ui.label(f"Chosen photo: {result['chosen_photo']}")
-            elif "presence_detected" in result:
-                ui.label(f"Presence detected: {result['presence_detected']}")
-            elif "capture_success" in result:
-                ui.label(f"Photo capture success: {result['capture_success']}")
-            elif "print_success" in result:
-                ui.label(f"Print success: {result['print_success']}")
-            elif "text" in result and "emotion" in result:
-                ui.label(f"AI ({result['emotion']}): {result['text']}")
-            else:
-                ui.label(f"Tool result: {result}")
+        display_message(msg)
 
 
 def handle_turn_ui(mode, my_shared_state, photo_list):
