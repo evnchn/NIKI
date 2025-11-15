@@ -142,6 +142,37 @@ ui.image.default_props("no-transition no-spinner")
 ## Button->response mapping moved to `niki_utils.get_button_and_responses_from_tool_call`
 
 
+# UI state mappings for different tool calls
+TOOL_UI_MAP = {
+    "detect_presence": {
+        "type": "display",
+        "emoji": "ヽ(＾Д＾)ﾉ",
+        "text": "Please step forward!",
+        "state": "DETECT_PRESENCE",
+    },
+    "capture_photos": {"type": "button", "text": "Cancel", "state": "CAPTURE_PHOTOS"},
+    "print_photo": {"type": "image", "src": "/assets/printing_photo.jpeg", "state": "PRINT_PHOTO"},
+    "show_goodbye_screen_and_wait": {"type": "display", "emoji": "👋", "text": "Goodbye!", "state": "GOODBYE"},
+    "get_info_for_engagement": {"type": "display", "emoji": "(╭ರ_•́)", "text": "Thinking...", "state": "THINKING"},
+}
+
+# Display formatters for tool results
+RESULT_DISPLAY_KEYS = [
+    ("framing_quality", lambda result: f"Camera framing assessed: {result['framing_quality']} - {result['details']}"),
+    ("engagement", lambda result: f"User engagement: {result['engagement']}"),
+    ("chosen_photo", lambda result: f"Chosen photo: {result['chosen_photo']}"),
+    ("presence_detected", lambda result: f"Presence detected: {result['presence_detected']}"),
+    ("capture_success", lambda result: f"Photo capture success: {result['capture_success']}"),
+    ("print_success", lambda result: f"Print success: {result['print_success']}"),
+    ("text", lambda result: f"AI ({result['emotion']}): {result['text']}" if "emotion" in result else None),
+    (
+        "username",
+        lambda result: f"Pitch fetched for {result['username']}: {result['pitch']}" if "pitch" in result else None,
+    ),
+    ("pitch", lambda result: f"AI (HAPPY): {result['pitch']}"),
+]
+
+
 class SharedState:
     turn = binding.BindableProperty(on_change=render_event.emit)
     pending_tool_call_id = binding.BindableProperty()
@@ -192,7 +223,7 @@ def display_photo_selection(row_classes="w-full"):
 
 
 def build_niki_ui(last_tool_called, last_tool_result):
-    ui_state = api_get_niki_ui(last_tool_called, last_tool_result)
+    ui_state = api_get_niki_ui(last_tool_called, last_tool_result, app.storage.general["global_username"], photo_list)
     ui_state_history.append(ui_state)
     if ui_state["type"] == "image":
         ui.image(ui_state["src"]).classes("w-full")
@@ -205,16 +236,14 @@ def build_niki_ui(last_tool_called, last_tool_result):
             my_button(ui_state["text"], on_click=lambda: handle_user_input("cancel"))
 
 
-def api_get_niki_ui(last_tool_called, last_tool_result):
+def api_get_niki_ui(last_tool_called, last_tool_result, global_username, photo_list):
     if last_tool_result and "print_success" in last_tool_result and last_tool_result["print_success"]:
         return {"type": "image", "src": "/assets/thank_you.jpeg", "state": "PRINT_SUCCESS"}
-    elif last_tool_called == "detect_presence":
-        return {"type": "display", "emoji": "ヽ(＾Д＾)ﾉ", "text": "Please step forward!", "state": "DETECT_PRESENCE"}
     elif last_tool_called == "wait_for_user_engagement":
         return {
             "type": "display",
             "emoji": "ヽ(＾Д＾)ﾉ",
-            "text": f"Hello {app.storage.general['global_username']}!",
+            "text": f"Hello {global_username}!",
             "state": "WAIT_FOR_USER_ENGAGEMENT",
         }
     elif last_tool_called == "wait_for_user_choose_photo":
@@ -223,16 +252,10 @@ def api_get_niki_ui(last_tool_called, last_tool_result):
             "photos": [f"/user_photos/{os.path.basename(photo)}" for photo in photo_list],
             "state": "WAIT_FOR_USER_CHOOSE_PHOTO",
         }
-    elif last_tool_called == "capture_photos":
-        return {"type": "button", "text": "Cancel", "state": "CAPTURE_PHOTOS"}
-    elif last_tool_called == "print_photo":
-        return {"type": "image", "src": "/assets/printing_photo.jpeg", "state": "PRINT_PHOTO"}
-    elif last_tool_called == "show_goodbye_screen_and_wait":
-        return {"type": "display", "emoji": "👋", "text": "Goodbye!", "state": "GOODBYE"}
-    elif last_tool_called == "get_info_for_engagement":
-        return {"type": "display", "emoji": "(╭ರ_•́)", "text": "Thinking...", "state": "THINKING"}
     else:
-        return {"type": "display", "emoji": "(ᴗ˳ᴗ)ᶻ𝗓𐰁 .ᐟ", "text": "Idle...", "state": "IDLE"}
+        return TOOL_UI_MAP.get(
+            last_tool_called, {"type": "display", "emoji": "(ᴗ˳ᴗ)ᶻ𝗓𐰁 .ᐟ", "text": "Idle...", "state": "IDLE"}
+        )
 
 
 def display_message(msg):
@@ -251,24 +274,12 @@ def display_message(msg):
                     ui.label(f"AI is calling {tool_call['function']['name']}...")
     elif role == "tool":
         result = json.loads(content)
-        if "framing_quality" in result:
-            ui.label(f"Camera framing assessed: {result['framing_quality']} - {result['details']}")
-        elif "engagement" in result:
-            ui.label(f"User engagement: {result['engagement']}")
-        elif "chosen_photo" in result:
-            ui.label(f"Chosen photo: {result['chosen_photo']}")
-        elif "presence_detected" in result:
-            ui.label(f"Presence detected: {result['presence_detected']}")
-        elif "capture_success" in result:
-            ui.label(f"Photo capture success: {result['capture_success']}")
-        elif "print_success" in result:
-            ui.label(f"Print success: {result['print_success']}")
-        elif "text" in result and "emotion" in result:
-            ui.label(f"AI ({result['emotion']}): {result['text']}")
-        elif "username" in result and "pitch" in result:
-            ui.label(f"Pitch fetched for {result['username']}: {result['pitch']}")
-        elif "pitch" in result:
-            ui.label(f"AI (HAPPY): {result['pitch']}")
+        for key, formatter in RESULT_DISPLAY_KEYS:
+            if key in result:
+                text = formatter(result)
+                if text:
+                    ui.label(text)
+                    break
         else:
             ui.label(f"Tool result: {result}")
 
@@ -288,7 +299,7 @@ def build_main_ui(mode):
 
 def build_admin_ui():
     last_tool_called, last_tool_result = get_last_tool_info()
-    ui_state = api_get_niki_ui(last_tool_called, last_tool_result)
+    ui_state = api_get_niki_ui(last_tool_called, last_tool_result, app.storage.general["global_username"], photo_list)
 
     # State steps
     states_order = [
@@ -360,6 +371,8 @@ def build_admin_ui():
             ]
             rows = []
             for msg in master_message_list:
+                if msg["role"] == "system":
+                    continue
                 content = msg.get("content", "")
                 if msg["role"] == "assistant" and "tool_calls" in msg:
                     tool_names = [tc["function"]["name"] for tc in msg["tool_calls"]]
@@ -496,7 +509,9 @@ def get_state():
         if my_shared_state.pending_tool_name
         else {},
         "event_uuids": event_uuids,
-        "niki_ui_state": api_get_niki_ui(last_tool_called, last_tool_result),
+        "niki_ui_state": api_get_niki_ui(
+            last_tool_called, last_tool_result, app.storage.general["global_username"], photo_list
+        ),
     }
 
 
