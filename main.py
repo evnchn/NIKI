@@ -43,10 +43,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)  # authenticated via API key
         if request.url.path.startswith("/_nicegui") or request.url.path in unrestricted_page_routes:
             return await call_next(request)  # necessary pages
+        print("Unauthenticated access with cookies:", request.cookies)
         return RedirectResponse(url="/login")
 
 
-app.add_middleware(AuthMiddleware)
+# app.add_middleware(AuthMiddleware)
 
 
 @ui.page("/login")
@@ -99,7 +100,10 @@ camera_taking_event.subscribe(lambda: update_event_uuid("camera_taking_event"))
 photo_list = []
 chosen_photos = []
 
-set_globals(render_event, tts_event, photo_list, chosen_photos)
+if "global_username" not in app.storage.general:
+    app.storage.general["global_username"] = "Guest"
+
+set_globals(render_event, tts_event, photo_list, chosen_photos, app.storage.general)
 
 if not os.path.exists("chosen_photos"):
     os.makedirs("chosen_photos")
@@ -190,7 +194,7 @@ def api_get_niki_ui(last_tool_called, last_tool_result):
         return {
             "type": "display",
             "emoji": "ヽ(＾Д＾)ﾉ",
-            "text": "Waiting for your confirmation...",
+            "text": f"Hello {app.storage.general['global_username']}!",
             "state": "WAIT_FOR_USER_ENGAGEMENT",
         }
     elif last_tool_called == "wait_for_user_choose_photo":
@@ -203,6 +207,8 @@ def api_get_niki_ui(last_tool_called, last_tool_result):
         return {"type": "button", "text": "Cancel", "state": "CAPTURE_PHOTOS"}
     elif last_tool_called == "print_photo":
         return {"type": "image", "src": "/assets/printing_photo.jpeg", "state": "PRINT_PHOTO"}
+    elif last_tool_called == "get_info_for_engagement":
+        return {"type": "display", "emoji": "(╭ರ_•́)", "text": "Thinking...", "state": "THINKING"}
     else:
         return {"type": "display", "emoji": "(ᴗ˳ᴗ)ᶻ𝗓𐰁 .ᐟ", "text": "Idle...", "state": "IDLE"}
 
@@ -237,6 +243,10 @@ def display_message(msg):
             ui.label(f"Print success: {result['print_success']}")
         elif "text" in result and "emotion" in result:
             ui.label(f"AI ({result['emotion']}): {result['text']}")
+        elif "username" in result and "pitch" in result:
+            ui.label(f"Pitch fetched for {result['username']}: {result['pitch']}")
+        elif "pitch" in result:
+            ui.label(f"AI (HAPPY): {result['pitch']}")
         else:
             ui.label(f"Tool result: {result}")
 
@@ -317,6 +327,13 @@ async def main_page(mode: str):
     if mode == "admin":
         my_button("Stop Voice", on_click=lambda: stop_voice_event.emit())
         my_button("Clear Conversation", on_click=lambda: clear_conversation(my_shared_state))
+        global_username_input = ui.input("Global Username", value=app.storage.general["global_username"]).props("dark")
+
+        def update_global_username():
+            app.storage.general["global_username"] = global_username_input.value
+            render_event.emit()
+
+        my_button("Update Global Username", on_click=update_global_username)
 
     def refresh():
         main_container.clear()

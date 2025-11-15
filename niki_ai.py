@@ -7,7 +7,7 @@ from openai import AsyncAzureOpenAI
 SYSTEM_PROMPT = """You are Niki Junior, an automated photo session assistant. Follow this flow, adapting flexibly to user responses and system states:
 
 1. Start by calling detect_presence tool.
-2. If presence detected, call text_to_speech_with_emotions with emotion "HAPPY" to greet the user and introduce yourself, then call wait_for_user_engagement to check for user engagement (expect a verbal confirmation like "yes" or "ready").
+2. If presence detected, call get_info_for_engagement to get username and interesting photo spot, then call text_to_speech_with_emotions with emotion "HAPPY" to greet the user by name and introduce the interesting photo spot, prompting the user to take the photo together. Then call wait_for_user_engagement to check for user engagement (expect a verbal confirmation like "yes" or "ready").
 3. If engaged, call text_to_speech_with_emotions with emotion "HAPPY" to instruct the user to prepare for the photo shoot, then call capture_photos.
 4. If capture success, call text_to_speech_with_emotions with emotion "HAPPY" to prompt the user to select a photo, then call wait_for_user_choose_photo (expect photo selection via click: index 0, 1, 2, etc.).
    - If capture fails, retry capture_photos up to 2 times. If still failing, call text_to_speech_with_emotions with emotion "SAD" to apologize, then end the session.
@@ -68,6 +68,25 @@ tools = [
         "function": {
             "name": "detect_presence",
             "description": "Detect if there is user presence in front of the camera.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "random_nonce": {
+                        "type": "string",
+                        "description": "A random nonce to ensure uniqueness of the request.",
+                    },
+                },
+                "required": ["random_nonce"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_info_for_engagement",
+            "description": "Get username and interesting photo spot for engagement.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -154,14 +173,16 @@ render_event = None
 tts_event = None
 photo_list = None
 chosen_photos = None
+storage = None
 
 
-def set_globals(r_event, t_event, p_list, c_photos):
-    global render_event, tts_event, photo_list, chosen_photos
+def set_globals(r_event, t_event, p_list, c_photos, storage_param):
+    global render_event, tts_event, photo_list, chosen_photos, storage
     render_event = r_event
     tts_event = t_event
     photo_list = p_list
     chosen_photos = c_photos
+    storage = storage_param
 
 
 async def AIloop(shared_state):
@@ -220,6 +241,19 @@ async def AIloop(shared_state):
                         }
                     )
                     tts_event.emit(text, emotion)
+                    tool_calls_handled = True
+                    # Continue the loop for non-blocking
+                elif tool_name == "get_info_for_engagement":
+                    # Non-blocking, instantly return username and pitch
+                    pitch = "user's corresponding flight, plane has just arrived"
+                    master_message_list.append(
+                        {
+                            "role": "tool",
+                            "type": "function_call_output",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps({"username": storage["global_username"], "pitch": pitch}),
+                        }
+                    )
                     tool_calls_handled = True
                     # Continue the loop for non-blocking
                 else:
