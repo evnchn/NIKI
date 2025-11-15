@@ -1,9 +1,12 @@
+import asyncio
 import json
 from time import time
 from fastapi import Request
 from fastapi.responses import FileResponse
 from nicegui import Event, ui, app, binding, background_tasks
 from openai import AsyncAzureOpenAI
+
+from sse_starlette.sse import EventSourceResponse
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -17,6 +20,29 @@ from camera import camera
 app.add_media_files('/assets', 'assets')
 app.add_media_files('/user_photos', 'user_photos')
 app.add_media_files('/chosen_photos', 'chosen_photos')
+
+# central storage for event UUIDs
+event_uuids = {
+    'render_event': str(uuid.uuid4()),
+    'stop_voice_event': str(uuid.uuid4()),
+    'tts_event': str(uuid.uuid4()),
+    'camera_taking_event': str(uuid.uuid4()),
+}
+
+def update_event_uuid(name: str):
+    event_uuids[name] = str(uuid.uuid4())
+
+render_event = Event()
+render_event.subscribe(lambda: update_event_uuid('render_event'))
+
+stop_voice_event = Event()
+stop_voice_event.subscribe(lambda: update_event_uuid('stop_voice_event'))
+
+tts_event = Event()
+tts_event.subscribe(lambda: update_event_uuid('tts_event'))
+
+camera_taking_event = Event()
+camera_taking_event.subscribe(lambda: update_event_uuid('camera_taking_event'))
 
 photo_list = []
 chosen_photos = []
@@ -252,14 +278,6 @@ master_message_list = [
         'content': SYSTEM_PROMPT
     }
 ]
-
-render_event = Event()
-
-stop_voice_event = Event()
-
-tts_event = Event()
-
-camera_taking_event = Event()
 
 
 class SharedState:
@@ -574,9 +592,7 @@ async def main_page(mode: str):
     refresh()
     render_event.subscribe(refresh)
 
-@app.get('/api/state')
-def api_return_state():
-    print("API state requested at time:", time())
+def get_state():
     return {
         'master_message_list': master_message_list,
         'turn': my_shared_state.turn,
@@ -585,7 +601,33 @@ def api_return_state():
         'pending_tool_args': my_shared_state.pending_tool_args,
         'latest_tts_path': latest_tts_path,
         'button_and_responses': get_button_and_responses_from_tool_call(my_shared_state.pending_tool_name) if my_shared_state.pending_tool_name else {},
+        'event_uuids': event_uuids,
     }
+
+@app.get('/api/state')
+def api_return_state():
+    print("API state requested at time:", time())
+    return get_state()
+    
+async def api_state_yielder(request: Request):
+    past_state = None
+    while True:
+        if request.is_disconnected():
+            print("Client disconnected from SSE")
+            break
+        state = get_state()
+        if state != past_state:
+            yield {
+                "event": "state_update",
+                "data": json.dumps(state)
+            }
+            past_state = state
+        await asyncio.sleep(0.1)
+
+@app.get('/api/state/sse')
+def api_state_sse(request: Request):
+    return EventSourceResponse(api_state_yielder(request))
+
 
 @app.post('/api/handle_user_input')
 async def api_handle_user_input(request: Request):
