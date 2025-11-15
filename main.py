@@ -7,11 +7,11 @@ from time import time
 from dotenv import load_dotenv
 from fastapi import Request
 from nicegui import Event, app, background_tasks, binding, ui
-from openai import AsyncAzureOpenAI
 from sse_starlette.sse import EventSourceResponse
 
 import tts
 from camera import camera
+from niki_ai import AIloop, clear_conversation, handle_user_input, master_message_list, set_globals
 from niki_utils import get_button_and_responses_from_tool_call, my_button, mydisplay, mystrip
 from photos import process_and_save_photo
 from tts import play_tts
@@ -50,6 +50,8 @@ camera_taking_event.subscribe(lambda: update_event_uuid("camera_taking_event"))
 photo_list = []
 chosen_photos = []
 
+set_globals(render_event, tts_event, photo_list, chosen_photos)
+
 if not os.path.exists("chosen_photos"):
     os.makedirs("chosen_photos")
 
@@ -74,156 +76,7 @@ if not os.path.exists("tts"):
 
 ui.image.default_props("no-transition no-spinner")
 
-SYSTEM_PROMPT = """You are Niki, an automated photo session assistant. Follow this flow, adapting flexibly to user responses and system states:
-
-1. Start by calling detect_presence tool.
-2. If presence detected, call text_to_speech_with_emotions with emotion "HAPPY" to say hello and explain who you are (e.g., "Hello! I'm Niki, your friendly photo assistant. Let's take some fun pictures!"), then call wait_for_user_engagement to check for user engagement (expect a verbal confirmation like "yes" or "ready").
-3. If engaged, call text_to_speech_with_emotions with emotion "HAPPY" to tell the user to get ready for a photo shoot (e.g., "Great! Simply move into camera, and I will take the photos for you at the right moment!"), then call capture_photos.
-4. If capture success, call text_to_speech_with_emotions with emotion "HAPPY" to ask the user to select a photo (e.g., "Awesome shots! Which one do you like best? Click on your favorite photo."), then call wait_for_user_choose_photo (expect photo selection via click: index 0, 1, 2, etc.).
-   - If capture fails, retry capture_photos up to 2 times. If still failing, call text_to_speech_with_emotions with emotion "SAD" to apologize (e.g., "Sorry, there was an issue taking the photo. Let's try again later."), then end the session.
-5. If photo selected, call text_to_speech_with_emotions with emotion "HAPPY" to say "I am printing the photo for you" (or similar, e.g., "Printing your favorite photo now!"), then call print_photo.
-   - If selection is invalid, prompt again once, then default to the first photo or end.
-6. If print success, call text_to_speech_with_emotions with emotion "HAPPY" to say goodbye to the user (e.g., "All done! Thanks for the fun photo session. Goodbye!").
-   - If print fails, retry print_photo up to 1 time. If still failing, call text_to_speech_with_emotions with emotion "SAD" to notify (e.g., "Sorry, printing failed. Your photo is saved digitally."), then proceed to goodbye.
-7. After saying goodbye, go back to step 1 for the next user.
-
-For any tool calls with failing results, try up to 5 times, then gracefully handle failure with appropriate speech and end the session if needed.
-
-Keep AI responses short and tool-focused. Use tools to block for inputs—do not assume inputs without calling tools. Before calling any tool, provide a brief response explaining what you are doing (e.g., "Checking for presence..."). For wait_for_user_engagement, specify what input you expect (e.g., "Waiting for your confirmation..."). For wait_for_user_choose_photo, always respond positively about the choice."""
-
-client = AsyncAzureOpenAI(azure_deployment="gpt-4o-mini")
-
-emotions = ["HAPPY", "SAD", "CONFUSED"]
-
-
-## Helper functions moved to `niki_utils.py` to reduce duplication and centralize behavior.
-
-
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "wait_for_user_engagement",
-            "description": "Wait for user engagement confirmation (yes/no).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "random_nonce": {
-                        "type": "string",
-                        "description": "A random nonce to ensure uniqueness of the request.",
-                    },
-                },
-                "required": ["random_nonce"],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "wait_for_user_choose_photo",
-            "description": "Wait for the user to choose a photo from the captured photos.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "random_nonce": {
-                        "type": "string",
-                        "description": "A random nonce to ensure uniqueness of the request.",
-                    },
-                },
-                "required": ["random_nonce"],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "detect_presence",
-            "description": "Detect if there is user presence in front of the camera.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "random_nonce": {
-                        "type": "string",
-                        "description": "A random nonce to ensure uniqueness of the request.",
-                    },
-                },
-                "required": ["random_nonce"],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "capture_photos",
-            "description": "Capture photos during the photo session.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "random_nonce": {
-                        "type": "string",
-                        "description": "A random nonce to ensure uniqueness of the request.",
-                    },
-                },
-                "required": ["random_nonce"],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "print_photo",
-            "description": "Print the selected photo.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "random_nonce": {
-                        "type": "string",
-                        "description": "A random nonce to ensure uniqueness of the request.",
-                    },
-                },
-                "required": ["random_nonce"],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "text_to_speech_with_emotions",
-            "description": "Convert text to speech with specified emotion to communicate with the user.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "text": {
-                        "type": "string",
-                        "description": "The text to speak to the user.",
-                    },
-                    "emotion": {
-                        "type": "string",
-                        "enum": ["HAPPY", "SAD", "CONFUSED"],
-                        "description": "The emotion to convey in the speech.",
-                    },
-                },
-                "required": ["text", "emotion"],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        },
-    },
-]
-
 ## Button->response mapping moved to `niki_utils.get_button_and_responses_from_tool_call`
-
-master_message_list = [{"role": "system", "content": SYSTEM_PROMPT}]
 
 
 class SharedState:
@@ -242,141 +95,6 @@ class SharedState:
 my_shared_state = SharedState()
 
 render_event.subscribe(lambda: print(f"Turn changed to: {my_shared_state.turn}"))
-
-
-async def AIloop():
-    my_shared_state.turn = "ai"
-    agent_continue = True
-    while agent_continue:
-        # save master_message_list to .debug.json
-        with open(".debug.json", "w") as f:
-            json.dump(master_message_list, f, indent=2)
-        result = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=master_message_list,
-            tools=tools,
-        )
-        if result.choices[0].message.tool_calls:
-            master_message_list.append(result.choices[0].message.to_dict())
-            tool_calls_handled = False
-            for tool_call in result.choices[0].message.tool_calls:
-                tool_name = tool_call.function.name
-                tool_args = tool_call.function.arguments
-                if tool_name == "wait_for_user_engagement":
-                    my_shared_state.pending_tool_call_id = tool_call.id
-                    my_shared_state.pending_tool_args = tool_args
-                    my_shared_state.pending_tool_name = tool_name
-                    my_shared_state.turn = "user"
-                    tool_calls_handled = True
-                    agent_continue = False
-                    break
-                elif tool_name == "wait_for_user_choose_photo":
-                    my_shared_state.pending_tool_call_id = tool_call.id
-                    my_shared_state.pending_tool_args = tool_args
-                    my_shared_state.pending_tool_name = tool_name
-                    my_shared_state.turn = "user"
-                    tool_calls_handled = True
-                    agent_continue = False
-                    break
-                elif tool_name in ["detect_presence", "capture_photos", "print_photo"]:
-                    my_shared_state.pending_tool_call_id = tool_call.id
-                    my_shared_state.pending_tool_args = tool_args
-                    my_shared_state.pending_tool_name = tool_name
-                    my_shared_state.turn = "admin"
-                    tool_calls_handled = True
-                    agent_continue = False
-                    break
-                elif tool_name == "text_to_speech_with_emotions":
-                    # Non-blocking TTS
-                    args = json.loads(tool_args)
-                    text = args["text"]
-                    emotion = args["emotion"]
-                    master_message_list.append(
-                        {
-                            "role": "tool",
-                            "type": "function_call_output",
-                            "tool_call_id": tool_call.id,
-                            "content": json.dumps({"success": True, "text": text, "emotion": emotion}),
-                        }
-                    )
-                    tts_event.emit(text, emotion)
-                    tool_calls_handled = True
-                    # Continue the loop for non-blocking
-                else:
-                    master_message_list.append(
-                        {
-                            "role": "tool",
-                            "type": "function_call_output",
-                            "tool_call_id": tool_call.id,
-                            "content": json.dumps({"error": f"Unknown tool: {tool_name}"}),
-                        }
-                    )
-            if not tool_calls_handled:
-                continue
-            # If tool_calls_handled, we are waiting for user input, so break the while
-        elif result.choices[0].message.content:
-            master_message_list.append({"role": "assistant", "content": result.choices[0].message.content})
-        elif result.choices[0].message.refusal:
-            master_message_list.append({"role": "assistant", "content": result.choices[0].message.refusal})
-        render_event.emit()
-
-
-async def handle_user_input(message: str):
-    if my_shared_state.pending_tool_call_id:
-        random_nonce = json.loads(my_shared_state.pending_tool_args).get("random_nonce", "")
-        if my_shared_state.pending_tool_name == "wait_for_user_engagement":
-            content = json.dumps({"engagement": message.lower() == "yes", "random_nonce": random_nonce})
-        elif my_shared_state.pending_tool_name == "wait_for_user_choose_photo":
-            content = json.dumps({"chosen_photo": message, "random_nonce": random_nonce})
-        elif my_shared_state.pending_tool_name == "detect_presence":
-            content = json.dumps({"presence_detected": message == "yes", "random_nonce": random_nonce})
-        elif my_shared_state.pending_tool_name == "capture_photos":
-            content = json.dumps({"capture_success": message == "yes", "random_nonce": random_nonce})
-        elif my_shared_state.pending_tool_name == "print_photo":
-            content = json.dumps({"print_success": message == "yes", "random_nonce": random_nonce})
-        else:
-            content = json.dumps(
-                {
-                    "error": f"Unknown tool response: {message}",
-                    "random_nonce": random_nonce,
-                }
-            )
-        master_message_list.append(
-            {
-                "role": "tool",
-                "type": "function_call_output",
-                "tool_call_id": my_shared_state.pending_tool_call_id,
-                "content": content,
-            }
-        )
-        # Handle photo selection
-        if my_shared_state.pending_tool_name == "wait_for_user_choose_photo":
-            try:
-                index = int(message)
-                if 0 <= index < len(photo_list):
-                    src = photo_list[index]
-                    dst = os.path.join("chosen_photos", os.path.basename(src))
-                    os.rename(src, dst)
-                    chosen_photos.append(dst)
-            except ValueError:
-                pass
-        my_shared_state.pending_tool_call_id = None
-        my_shared_state.pending_tool_args = None
-        my_shared_state.pending_tool_name = None
-        if my_shared_state.turn == "admin":
-            my_shared_state.turn = "ai"
-    await AIloop()
-
-
-def clear_conversation():
-    master_message_list.clear()
-    master_message_list.append({"role": "system", "content": SYSTEM_PROMPT})
-    my_shared_state.pending_tool_call_id = None
-    my_shared_state.pending_tool_args = None
-    my_shared_state.pending_tool_name = None
-    photo_list.clear()
-    chosen_photos.clear()
-    render_event.emit()
 
 
 @ui.page("/")
@@ -406,13 +124,13 @@ async def main_page(mode: str):
         camera_taking_event.subscribe(cam.capture)
     if mode == "admin":
         my_button("Stop Voice", on_click=lambda: stop_voice_event.emit())
-        my_button("Clear Conversation", on_click=clear_conversation)
+        my_button("Clear Conversation", on_click=lambda: clear_conversation(my_shared_state))
 
     def display_photo_selection(on_click, row_classes="w-full"):
         with ui.row().classes(row_classes):
             for i, photo in enumerate(photo_list):
                 img = ui.image(f"/user_photos/{os.path.basename(photo)}").classes("w-1/3")
-                img.on("click", lambda e, i=i: on_click(str(i)))
+                img.on("click", lambda e, i=i: handle_user_input(str(i), my_shared_state))
 
     def refresh():
         last_tool_called = None
@@ -479,7 +197,7 @@ async def main_page(mode: str):
                     # Show friendly waiting prompt on the Niki screen
                     mydisplay("ヽ(＾Д＾)ﾉ", "Waiting for your confirmation...")
                 elif last_tool_called == "wait_for_user_choose_photo":
-                    display_photo_selection(handle_user_input)
+                    display_photo_selection(None)
                 elif last_tool_called == "capture_photos":
                     my_button("Cancel", on_click=lambda: handle_user_input("cancel"))
                 elif last_tool_called == "print_photo":
@@ -490,10 +208,10 @@ async def main_page(mode: str):
             if my_shared_state.turn == "user" and my_shared_state.pending_tool_name == "wait_for_user_engagement":
                 if mode in ("user", "admin"):
                     ui.label("User's Turn: Confirm Engagement")
-                    my_button("Yes", on_click=lambda: handle_user_input("yes"))
-                    my_button("No", on_click=lambda: handle_user_input("no"))
+                    my_button("Yes", on_click=lambda: handle_user_input("yes", my_shared_state))
+                    my_button("No", on_click=lambda: handle_user_input("no", my_shared_state))
             elif my_shared_state.turn == "user" and my_shared_state.pending_tool_name == "wait_for_user_choose_photo":
-                display_photo_selection(handle_user_input, "")
+                display_photo_selection(None, "")
             elif my_shared_state.turn == "admin" and my_shared_state.pending_tool_name:
                 button_and_responses = get_button_and_responses_from_tool_call(
                     my_shared_state.pending_tool_name, photo_list
@@ -503,7 +221,7 @@ async def main_page(mode: str):
                     for button_text, response in button_and_responses.items():
                         my_button(
                             button_text,
-                            on_click=lambda r=response: handle_user_input(r),
+                            on_click=lambda r=response: handle_user_input(r, my_shared_state),
                         )
                     if my_shared_state.pending_tool_name == "capture_photos":
                         my_button("Capture Photo", on_click=camera_taking_event.emit)
@@ -515,7 +233,7 @@ async def main_page(mode: str):
                 else:
                     ui.label(f"Waiting for admin to handle {my_shared_state.pending_tool_name}...")
             elif len(master_message_list) == 1 and mode in ("user", "admin"):
-                my_button("Start Conversation", on_click=AIloop)
+                my_button("Start Conversation", on_click=lambda: AIloop(my_shared_state))
             else:
                 ui.label("AI is thinking...")
 
@@ -571,7 +289,7 @@ def api_state_sse(request: Request):
 async def api_handle_user_input(request: Request):
     data = await request.json()
     message = data.get("message", "")
-    background_tasks.create(handle_user_input(message))
+    background_tasks.create(lambda: handle_user_input(message, my_shared_state))
     return "Submitted to server, running AI loop right now."
 
 
