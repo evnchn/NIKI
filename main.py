@@ -99,7 +99,6 @@ client = AsyncAzureOpenAI(azure_deployment="gpt-4o-mini")
 
 emotions = ["HAPPY", "SAD", "CONFUSED"]
 
-capture_done = False
 
 ## Helper functions moved to `niki_utils.py` to reduce duplication and centralize behavior.
 
@@ -382,7 +381,6 @@ async def handle_user_input(message: str):
 
 
 def clear_conversation():
-    global capture_done
     master_message_list.clear()
     master_message_list.append({"role": "system", "content": SYSTEM_PROMPT})
     my_shared_state.pending_tool_call_id = None
@@ -390,7 +388,6 @@ def clear_conversation():
     my_shared_state.pending_tool_name = None
     photo_list.clear()
     chosen_photos.clear()
-    capture_done = False
     render_event.emit()
 
 
@@ -409,10 +406,7 @@ async def main_page(mode: str):
     cam = camera().classes("w-full")
     cam.set_visibility(False)
 
-    def trigger_capture():
-        global capture_done
-        cam.capture()
-        capture_done = True
+
 
     main_container = ui.column().classes("w-full")
 
@@ -423,7 +417,7 @@ async def main_page(mode: str):
                 "if (window.currentAudio) { window.currentAudio.pause(); window.currentAudio.currentTime = 0; }"
             )
         )
-        camera_taking_event.subscribe(trigger_capture)
+        camera_taking_event.subscribe(cam.capture)
     if mode == "admin":
         my_button("Stop Voice", on_click=lambda: stop_voice_event.emit())
         my_button("Clear Conversation", on_click=clear_conversation)
