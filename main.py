@@ -408,6 +408,12 @@ async def main_page(mode: str):
         my_button("Stop Voice", on_click=lambda: stop_voice_event.emit())
         my_button("Clear Conversation", on_click=clear_conversation)
 
+    def display_photo_selection(on_click, row_classes="w-full"):
+        with ui.row().classes(row_classes):
+            for i, photo in enumerate(photo_list):
+                img = ui.image(f"/user_photos/{os.path.basename(photo)}").classes("w-1/3")
+                img.on("click", lambda e, i=i: on_click(str(i)))
+
     def refresh():
         last_tool_called = None
         main_container.clear()
@@ -473,10 +479,7 @@ async def main_page(mode: str):
                     # Show friendly waiting prompt on the Niki screen
                     mydisplay("ヽ(＾Д＾)ﾉ", "Waiting for your confirmation...")
                 elif last_tool_called == "wait_for_user_choose_photo":
-                    with ui.row().classes("w-full"):
-                        for i, photo in enumerate(photo_list):
-                            img = ui.image(f"/user_photos/{os.path.basename(photo)}").classes("w-1/3")
-                            img.on("click", lambda e, i=i: handle_user_input(str(i)))
+                    display_photo_selection(handle_user_input)
                 elif last_tool_called == "capture_photos":
                     my_button("Cancel", on_click=lambda: handle_user_input("cancel"))
                 elif last_tool_called == "print_photo":
@@ -490,10 +493,7 @@ async def main_page(mode: str):
                     my_button("Yes", on_click=lambda: handle_user_input("yes"))
                     my_button("No", on_click=lambda: handle_user_input("no"))
             elif my_shared_state.turn == "user" and my_shared_state.pending_tool_name == "wait_for_user_choose_photo":
-                with ui.row():
-                    for i, photo in enumerate(photo_list):
-                        img = ui.image(f"/user_photos/{os.path.basename(photo)}").classes("w-1/3")
-                        img.on("click", lambda e, i=i: handle_user_input(str(i)))
+                display_photo_selection(handle_user_input, "")
             elif my_shared_state.turn == "admin" and my_shared_state.pending_tool_name:
                 button_and_responses = get_button_and_responses_from_tool_call(
                     my_shared_state.pending_tool_name, photo_list
