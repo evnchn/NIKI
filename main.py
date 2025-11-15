@@ -1,5 +1,6 @@
 import json
 from time import time
+from fastapi import Request
 from nicegui import Event, ui, app, binding, background_tasks
 from openai import AsyncAzureOpenAI
 
@@ -9,6 +10,7 @@ load_dotenv()
 from gtts import gTTS
 import uuid
 import os
+import base64
 from camera import camera
 
 app.add_media_files('/assets', 'assets')
@@ -479,7 +481,8 @@ async def main_page(mode: str):
                     camera().classes('w-full')
                     my_button("Cancel", on_click=lambda: handle_user_input("cancel"))
                 elif last_tool_called == 'capture_photos':
-                    camera().classes('w-full')
+                    cam = camera().classes('w-full')
+                    cam.capture()
                     my_button("Cancel", on_click=lambda: handle_user_input("cancel"))
                 elif last_tool_called == 'print_photo':
                     ui.image('/assets/printing_photo.jpeg').classes('w-full')
@@ -545,9 +548,26 @@ async def api_handle_admin_choice(request):
     background_tasks.create(handle_admin_choice(choice))
     return "Submitted to server, running AI loop right now."
 
+@app.post('/api/save_photo')
+async def save_photo(request: Request):
+    data = await request.json()
+    image_data = data['b64url']
+    header, encoded = image_data.split(',', 1)
+    if header == 'data:image/jpeg;base64' or header == 'data:image/jpg;base64':
+        filetype = 'jpg'
+    else:
+        filetype = 'png'
+    image_bytes = base64.b64decode(encoded)
+    os.makedirs('user_photos', exist_ok=True)
+    filename = f"user_photos/photo_{int(time())}.{filetype}"
+    with open(filename, 'wb') as f:
+        f.write(image_bytes)
+    return {"success": True, "filename": filename}
+
 
 @ui.page("/test/camera")
 def test_camera_page():
-    camera().classes('w-full')
+    cam = camera().classes('w-full')
+    ui.button("Capture", on_click=lambda: cam.capture())
 
 ui.run(port=11011, show=False)

@@ -18,5 +18,26 @@ export default {
       const tracks = stream.getTracks();
       tracks.forEach(track => track.stop());
     }
+  },
+  methods: {
+    capture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = this.$refs.video.videoWidth;
+      canvas.height = this.$refs.video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(this.$refs.video, 0, 0);
+      const dataURL = canvas.toDataURL('image/jpeg');
+      fetch('/api/save_photo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ b64url: dataURL })
+      }).then(response => response.json()).then(data => {
+        console.log('Photo saved:', data);
+      }).catch(err => {
+        console.error('Error saving photo:', err);
+      });
+      // Play shutter sound
+      new Audio('/assets/camera-shutter.mp3').play();
+    }
   }
 };
