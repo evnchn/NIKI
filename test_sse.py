@@ -2,8 +2,9 @@ import requests
 import json
 import time
 
+
 def test_sse():
-    url = 'http://localhost:11011/api/state/sse'
+    url = "http://localhost:11011/api/state/sse"
     print("Connecting to SSE endpoint...")
     try:
         with requests.get(url, stream=True, timeout=30) as response:
@@ -13,15 +14,15 @@ def test_sse():
             print("Connected. Listening for events...")
             for line in response.iter_lines():
                 if line:
-                    line_str = line.decode('utf-8').strip()
-                    if line_str.startswith('data: '):
+                    line_str = line.decode("utf-8").strip()
+                    if line_str.startswith("data: "):
                         data_str = line_str[6:]
                         try:
                             event_data = json.loads(data_str)
                             print(f"Received event: {event_data}")
                         except json.JSONDecodeError as e:
                             print(f"Failed to parse JSON: {e}, data: {data_str}")
-                    elif line_str.startswith('event: '):
+                    elif line_str.startswith("event: "):
                         event_type = line_str[7:]
                         print(f"Event type: {event_type}")
                     # For simplicity, just print all non-empty lines
@@ -32,6 +33,7 @@ def test_sse():
         print(f"Request failed: {e}")
     except KeyboardInterrupt:
         print("Test interrupted by user.")
+
 
 if __name__ == "__main__":
     test_sse()
