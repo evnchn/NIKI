@@ -13,10 +13,13 @@ app.add_media_files('/assets', 'assets')
 
 ui.add_css("""
 body {
-    background-color: rgb(0, 101, 100);
+    background-color: #006160;
 }
 """, shared=True)
 ui.label.default_classes("text-white")
+
+def my_button(text, *, on_click=None):
+    return ui.button(text, color="white", on_click=on_click).classes('text-[#006160]')
 
 if not os.path.exists('tts'):
     os.makedirs('tts')
@@ -388,7 +391,7 @@ async def main_page(mode: str):
         return
     
     if mode == 'niki':
-        mybutton = ui.button("Click to begin")
+        mybutton = my_button("Click to begin")
         await mybutton.clicked()
         mybutton.delete()
 
@@ -398,8 +401,8 @@ async def main_page(mode: str):
         tts_event.subscribe(lambda text, emotion: play_tts(text, emotion))
         stop_voice_event.subscribe(lambda: ui.run_javascript("if (window.currentAudio) { window.currentAudio.pause(); window.currentAudio.currentTime = 0; }"))
     if mode == 'admin':
-        ui.button('Stop Voice', on_click=lambda: stop_voice_event.emit())
-        ui.button('Clear Conversation', on_click=clear_conversation)
+        my_button('Stop Voice', on_click=lambda: stop_voice_event.emit())
+        my_button('Clear Conversation', on_click=clear_conversation)
 
     def refresh():
         main_container.clear()
@@ -457,19 +460,19 @@ async def main_page(mode: str):
                 elif last_tool_called == 'wait_for_user_input':
                     if has_capture:
                         ui.image('/assets/choose_options.jpeg').classes('w-full')
-                        ui.button("First", on_click=lambda: handle_user_input("first"))
-                        ui.button("Second", on_click=lambda: handle_user_input("second"))
-                        ui.button("Third", on_click=lambda: handle_user_input("third"))
+                        my_button("First", on_click=lambda: handle_user_input("first"))
+                        my_button("Second", on_click=lambda: handle_user_input("second"))
+                        my_button("Third", on_click=lambda: handle_user_input("third"))
                     else:
                         ui.image('/assets/username_shown.jpeg').classes('w-full')
-                        ui.button("Continue", on_click=lambda: handle_user_input("yes"))
-                        ui.button("Cancel", on_click=lambda: handle_user_input("no"))
+                        my_button("Continue", on_click=lambda: handle_user_input("yes"))
+                        my_button("Cancel", on_click=lambda: handle_user_input("no"))
                 elif last_tool_called == 'assess_camera_framing':
                     ui.image('/assets/view_finder.jpeg').classes('w-full')
-                    ui.button("Cancel", on_click=lambda: handle_user_input("cancel"))
+                    my_button("Cancel", on_click=lambda: handle_user_input("cancel"))
                 elif last_tool_called == 'capture_photos':
                     ui.image('/assets/view_finder.jpeg').classes('w-full')
-                    ui.button("Cancel", on_click=lambda: handle_user_input("cancel"))
+                    my_button("Cancel", on_click=lambda: handle_user_input("cancel"))
                 elif last_tool_called == 'print_photo':
                     ui.image('/assets/printing_photo.jpeg').classes('w-full')
                 elif last_tool_result and 'print_success' in last_tool_result and last_tool_result['print_success']:
@@ -480,30 +483,30 @@ async def main_page(mode: str):
                 if mode != 'niki':
                     ui.label("User's Turn")
                     user_input = ui.input(placeholder='Type your message...')
-                    ui.button('Send', on_click=lambda: handle_user_input(
+                    my_button('Send', on_click=lambda: handle_user_input(
                         user_input.value))
             elif my_shared_state.turn == 'admin' and my_shared_state.pending_tool_name:
                 if mode == 'admin':
                     if my_shared_state.pending_tool_name == 'assess_camera_framing':
                         ui.label("Admin: Choose camera framing quality")
-                        ui.button('Good Framing', on_click=lambda: handle_admin_choice('good'))
-                        ui.button('Bad Framing', on_click=lambda: handle_admin_choice('bad'))
+                        my_button('Good Framing', on_click=lambda: handle_admin_choice('good'))
+                        my_button('Bad Framing', on_click=lambda: handle_admin_choice('bad'))
                     elif my_shared_state.pending_tool_name == 'detect_presence':
                         ui.label("Admin: Confirm presence detection")
-                        ui.button('Yes', on_click=lambda: handle_admin_choice('yes'))
-                        ui.button('No', on_click=lambda: handle_admin_choice('no'))
+                        my_button('Yes', on_click=lambda: handle_admin_choice('yes'))
+                        my_button('No', on_click=lambda: handle_admin_choice('no'))
                     elif my_shared_state.pending_tool_name == 'capture_photos':
                         ui.label("Admin: Confirm photo capture")
-                        ui.button('Captured', on_click=lambda: handle_admin_choice('yes'))
-                        ui.button('Failed', on_click=lambda: handle_admin_choice('no'))
+                        my_button('Captured', on_click=lambda: handle_admin_choice('yes'))
+                        my_button('Failed', on_click=lambda: handle_admin_choice('no'))
                     elif my_shared_state.pending_tool_name == 'print_photo':
                         ui.label("Admin: Confirm printing")
-                        ui.button('Printed', on_click=lambda: handle_admin_choice('yes'))
-                        ui.button('Failed', on_click=lambda: handle_admin_choice('no'))
+                        my_button('Printed', on_click=lambda: handle_admin_choice('yes'))
+                        my_button('Failed', on_click=lambda: handle_admin_choice('no'))
                 else:
                     ui.label(f"Waiting for admin to handle {my_shared_state.pending_tool_name}...")
             elif len(master_message_list) == 1 and mode in ('user', 'admin'):
-                ui.button('Start Conversation', on_click=AIloop)
+                my_button('Start Conversation', on_click=AIloop)
             else:
                 ui.label("AI is thinking...")
 
