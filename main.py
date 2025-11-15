@@ -375,6 +375,13 @@ async def main_page(mode: str):
             interrupt_input = ui.input("User message for interrupt", value="").props("dark").classes("flex-grow")
             my_button("Interrupt", on_click=lambda: handle_interrupt(interrupt_input.value))
 
+        with ui.row().classes("w-full"):
+            my_button(
+                "Interrupt (tech)",
+                on_click=lambda: handle_interrupt("Tell me about yourself and the technology which empowers you."),
+            )
+            my_button("Interrupt (no-tech)", on_click=lambda: handle_interrupt("Tell me about yourself"))
+
     def refresh():
         main_container.clear()
         with main_container:
