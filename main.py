@@ -18,6 +18,8 @@ from niki_utils import get_button_and_responses_from_tool_call, my_button, mydis
 from photos import process_and_save_photo
 from tts import play_tts
 
+load_dotenv()
+
 assert "NIKI_API_KEY" in os.environ, "NIKI_API_KEY environment variable not set"
 assert "NIKI_USER_PASSWORD" in os.environ, "NIKI_USER_PASSWORD environment variable not set"
 
@@ -64,8 +66,6 @@ def login_page():
         ui.button("Log in", on_click=try_login)
     return None
 
-
-load_dotenv()
 
 app.add_media_files("/assets", "assets")
 app.add_media_files("/user_photos", "user_photos")
