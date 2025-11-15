@@ -1,0 +1,6 @@
+# Maximum line length
+line-length = 88
+# Target Python version for rules and parsing
+target-version = "py310"
+# Exclude common directories and generated content
+exclude = ["__pycache__", "build", "dist", ".venv", "venv", "user_photos", "chosen_photos", "tts", "assets"]

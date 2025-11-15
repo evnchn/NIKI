@@ -2,14 +2,13 @@ import asyncio
 import json
 from time import time
 from fastapi import Request
-from fastapi.responses import FileResponse
 from nicegui import Event, ui, app, binding, background_tasks
 from openai import AsyncAzureOpenAI
 
 from sse_starlette.sse import EventSourceResponse
 
 from dotenv import load_dotenv
-load_dotenv()
+
 
 import uuid
 import os
@@ -18,6 +17,8 @@ from tts import play_tts
 from photos import process_and_save_photo
 from camera import camera
 from niki_utils import mystrip, get_button_and_responses_from_tool_call
+
+load_dotenv()
 
 app.add_media_files('/assets', 'assets')
 app.add_media_files('/user_photos', 'user_photos')
@@ -479,8 +480,6 @@ async def main_page(mode: str):
                         else:
                             ui.label(f'Tool result: {result}')
             else:
-                # Determine if capture has happened
-                has_capture = any(msg.get('role') == 'assistant' and 'tool_calls' in msg and any(tc['function']['name'] == 'capture_photos' for tc in msg['tool_calls']) for msg in master_message_list)
                 last_tool_called = None
                 for msg in reversed(master_message_list):
                     if msg['role'] == 'assistant' and 'tool_calls' in msg:
