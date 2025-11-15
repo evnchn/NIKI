@@ -12,18 +12,18 @@ from time import time
 from PIL import Image
 
 
-def process_and_save_photo(b64url: str, out_dir: str = 'user_photos') -> str:
+def process_and_save_photo(b64url: str, out_dir: str = "user_photos") -> str:
     """Process a base64 data URL and save a final image file in `out_dir`.
 
     Returns the filename (relative path) where the image was saved.
     """
     if not b64url:
-        raise ValueError('Empty image data')
-    header, encoded = b64url.split(',', 1)
-    if header in ('data:image/jpeg;base64', 'data:image/jpg;base64'):
-        filetype = 'jpg'
+        raise ValueError("Empty image data")
+    header, encoded = b64url.split(",", 1)
+    if header in ("data:image/jpeg;base64", "data:image/jpg;base64"):
+        filetype = "jpg"
     else:
-        filetype = 'png'
+        filetype = "png"
     image_bytes = base64.b64decode(encoded)
     image = Image.open(BytesIO(image_bytes))
 
@@ -43,7 +43,7 @@ def process_and_save_photo(b64url: str, out_dir: str = 'user_photos') -> str:
         left = 0
         right = width
 
-    cropped = image.crop((left, top, right, bottom)).convert('RGB')
+    cropped = image.crop((left, top, right, bottom)).convert("RGB")
 
     # Resize to inner area 1400x900 then add 50px white border
     target_size = (1400, 900)
@@ -51,14 +51,14 @@ def process_and_save_photo(b64url: str, out_dir: str = 'user_photos') -> str:
     border_px = 50
     bordered_width = resized.width + border_px * 2
     bordered_height = resized.height + border_px * 2
-    bordered = Image.new('RGB', (bordered_width, bordered_height), (255, 255, 255))
+    bordered = Image.new("RGB", (bordered_width, bordered_height), (255, 255, 255))
     bordered.paste(resized, (border_px, border_px))
 
     os.makedirs(out_dir, exist_ok=True)
-    filename = f'{out_dir}/photo_{int(time())}.{filetype}'
-    with open(filename, 'wb') as f:
-        if filetype == 'jpg':
-            bordered.save(f, format='JPEG')
+    filename = f"{out_dir}/photo_{int(time())}.{filetype}"
+    with open(filename, "wb") as f:
+        if filetype == "jpg":
+            bordered.save(f, format="JPEG")
         else:
-            bordered.save(f, format='PNG')
+            bordered.save(f, format="PNG")
     return filename
