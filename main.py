@@ -97,6 +97,115 @@ my_shared_state = SharedState()
 render_event.subscribe(lambda: print(f"Turn changed to: {my_shared_state.turn}"))
 
 
+def get_last_tool_info():
+    last_tool_called = None
+    for msg in reversed(master_message_list):
+        if msg["role"] == "assistant" and "tool_calls" in msg:
+            for tc in reversed(msg["tool_calls"]):
+                if tc["function"]["name"] != "text_to_speech_with_emotions":
+                    last_tool_called = tc["function"]["name"]
+                    break
+            if last_tool_called:
+                break
+    last_tool_result = None
+    for msg in reversed(master_message_list):
+        if msg["role"] == "tool":
+            last_tool_result = json.loads(msg["content"])
+            break
+    return last_tool_called, last_tool_result
+
+
+def display_photo_selection(row_classes="w-full"):
+    with ui.row().classes(row_classes):
+        for i, photo in enumerate(photo_list):
+            img = ui.image(f"/user_photos/{os.path.basename(photo)}").classes("w-1/3")
+            img.on("click", lambda e, i=i: handle_user_input(str(i), my_shared_state))
+
+
+def build_niki_ui(last_tool_called, last_tool_result):
+    if last_tool_result and "print_success" in last_tool_result and last_tool_result["print_success"]:
+        ui.image("/assets/thank_you.jpeg").classes("w-full")
+    elif last_tool_called == "detect_presence":
+        mydisplay("ヽ(＾Д＾)ﾉ", "Please step forward!")
+    elif last_tool_called == "wait_for_user_engagement":
+        mydisplay("ヽ(＾Д＾)ﾉ", "Waiting for your confirmation...")
+    elif last_tool_called == "wait_for_user_choose_photo":
+        display_photo_selection()
+    elif last_tool_called == "capture_photos":
+        my_button("Cancel", on_click=lambda: handle_user_input("cancel"))
+    elif last_tool_called == "print_photo":
+        ui.image("/assets/printing_photo.jpeg").classes("w-full")
+    else:
+        mydisplay("(ᴗ˳ᴗ)ᶻ𝗓𐰁 .ᐟ", "Idle...")
+
+
+def build_user_admin_ui(mode):
+    for msg in master_message_list:
+        role = msg["role"]
+        content = msg["content"]
+        if role == "user":
+            ui.label(f"User: {content}")
+        elif role == "assistant":
+            content = msg.get("content")
+            if content:
+                prefix, stripped_content = mystrip(content)
+                ui.label(f"AI ({prefix}): {stripped_content}")
+            if "tool_calls" in msg:
+                for tool_call in msg["tool_calls"]:
+                    if tool_call["function"]["name"] != "text_to_speech_with_emotions":
+                        ui.label(f"AI is calling {tool_call['function']['name']}...")
+        elif role == "tool":
+            result = json.loads(content)
+            if "framing_quality" in result:
+                ui.label(f"Camera framing assessed: {result['framing_quality']} - {result['details']}")
+            elif "engagement" in result:
+                ui.label(f"User engagement: {result['engagement']}")
+            elif "chosen_photo" in result:
+                ui.label(f"Chosen photo: {result['chosen_photo']}")
+            elif "presence_detected" in result:
+                ui.label(f"Presence detected: {result['presence_detected']}")
+            elif "capture_success" in result:
+                ui.label(f"Photo capture success: {result['capture_success']}")
+            elif "print_success" in result:
+                ui.label(f"Print success: {result['print_success']}")
+            elif "text" in result and "emotion" in result:
+                ui.label(f"AI ({result['emotion']}): {result['text']}")
+            else:
+                ui.label(f"Tool result: {result}")
+
+
+def handle_turn_ui(mode, my_shared_state, photo_list):
+    if my_shared_state.turn == "user" and my_shared_state.pending_tool_name == "wait_for_user_engagement":
+        if mode in ("user", "admin"):
+            ui.label("User's Turn: Confirm Engagement")
+            my_button("Yes", on_click=lambda: handle_user_input("yes", my_shared_state))
+            my_button("No", on_click=lambda: handle_user_input("no", my_shared_state))
+    elif my_shared_state.turn == "user" and my_shared_state.pending_tool_name == "wait_for_user_choose_photo":
+        display_photo_selection("")
+    elif my_shared_state.turn == "admin" and my_shared_state.pending_tool_name:
+        button_and_responses = get_button_and_responses_from_tool_call(my_shared_state.pending_tool_name, photo_list)
+        if mode == "admin":
+            ui.label(f"Admin: Choose for {my_shared_state.pending_tool_name}")
+            for button_text, response in button_and_responses.items():
+                my_button(
+                    button_text,
+                    on_click=lambda r=response: handle_user_input(r, my_shared_state),
+                )
+            if my_shared_state.pending_tool_name == "capture_photos":
+                my_button("Capture Photo", on_click=camera_taking_event.emit)
+                my_button(
+                    "Say cheese",
+                    on_click=lambda: play_tts("Say cheese! Smile big!", "HAPPY"),
+                )
+                my_button("3 2 1", on_click=lambda: play_tts("3 2 1", "HAPPY"))
+        else:
+            ui.label(f"Waiting for admin to handle {my_shared_state.pending_tool_name}...")
+    elif len(master_message_list) == 1 and mode in ("user", "admin"):
+        my_button("Start Conversation", on_click=lambda: AIloop(my_shared_state))
+    else:
+        ui.label("AI is thinking...")
+
+
 @ui.page("/")
 @ui.page("/{mode}")
 async def main_page(mode: str):
@@ -126,116 +235,16 @@ async def main_page(mode: str):
         my_button("Stop Voice", on_click=lambda: stop_voice_event.emit())
         my_button("Clear Conversation", on_click=lambda: clear_conversation(my_shared_state))
 
-    def display_photo_selection(on_click, row_classes="w-full"):
-        with ui.row().classes(row_classes):
-            for i, photo in enumerate(photo_list):
-                img = ui.image(f"/user_photos/{os.path.basename(photo)}").classes("w-1/3")
-                img.on("click", lambda e, i=i: handle_user_input(str(i), my_shared_state))
-
     def refresh():
         last_tool_called = None
         main_container.clear()
         with main_container:
             if mode != "niki":
-                for i, msg in enumerate(master_message_list):
-                    if mode == "niki" and i != len(master_message_list) - 1:
-                        continue  # niki mode only shows latest message
-                    role = msg["role"]
-                    content = msg["content"]
-                    if role == "user":
-                        ui.label(f"User: {content}")
-                    elif role == "assistant":
-                        content = msg.get("content")
-                        if content:
-                            prefix, stripped_content = mystrip(content)
-                            ui.label(f"AI ({prefix}): {stripped_content}")
-                            if mode == "niki":
-                                play_tts(stripped_content, prefix)
-                        if "tool_calls" in msg:
-                            for tool_call in msg["tool_calls"]:
-                                if tool_call["function"]["name"] != "text_to_speech_with_emotions":
-                                    ui.label(f"AI is calling {tool_call['function']['name']}...")
-                    elif role == "tool":
-                        result = json.loads(content)
-                        if "framing_quality" in result:
-                            ui.label(f"Camera framing assessed: {result['framing_quality']} - {result['details']}")
-                        elif "engagement" in result:
-                            ui.label(f"User engagement: {result['engagement']}")
-                        elif "chosen_photo" in result:
-                            ui.label(f"Chosen photo: {result['chosen_photo']}")
-                        elif "presence_detected" in result:
-                            ui.label(f"Presence detected: {result['presence_detected']}")
-                        elif "capture_success" in result:
-                            ui.label(f"Photo capture success: {result['capture_success']}")
-                        elif "print_success" in result:
-                            ui.label(f"Print success: {result['print_success']}")
-                        elif "text" in result and "emotion" in result:
-                            ui.label(f"AI ({result['emotion']}): {result['text']}")
-                        else:
-                            ui.label(f"Tool result: {result}")
+                build_user_admin_ui(mode)
             else:
-                last_tool_called = None
-                for msg in reversed(master_message_list):
-                    if msg["role"] == "assistant" and "tool_calls" in msg:
-                        for tc in reversed(msg["tool_calls"]):
-                            if tc["function"]["name"] != "text_to_speech_with_emotions":
-                                last_tool_called = tc["function"]["name"]
-                                break
-                        if last_tool_called:
-                            break
-                last_tool_result = None
-                for msg in reversed(master_message_list):
-                    if msg["role"] == "tool":
-                        last_tool_result = json.loads(msg["content"])
-                        break
-                if last_tool_result and "print_success" in last_tool_result and last_tool_result["print_success"]:
-                    ui.image("/assets/thank_you.jpeg").classes("w-full")
-                elif last_tool_called == "detect_presence":
-                    # ('/assets/step_forward.jpeg').classes('w-full')
-                    mydisplay("ヽ(＾Д＾)ﾉ", "Please step forward!")
-                elif last_tool_called == "wait_for_user_engagement":
-                    # Show friendly waiting prompt on the Niki screen
-                    mydisplay("ヽ(＾Д＾)ﾉ", "Waiting for your confirmation...")
-                elif last_tool_called == "wait_for_user_choose_photo":
-                    display_photo_selection(None)
-                elif last_tool_called == "capture_photos":
-                    my_button("Cancel", on_click=lambda: handle_user_input("cancel"))
-                elif last_tool_called == "print_photo":
-                    ui.image("/assets/printing_photo.jpeg").classes("w-full")
-                else:
-                    # ('/assets/idle.jpeg').classes('w-full')
-                    mydisplay("(ᴗ˳ᴗ)ᶻ𝗓𐰁 .ᐟ", "Idle...")
-            if my_shared_state.turn == "user" and my_shared_state.pending_tool_name == "wait_for_user_engagement":
-                if mode in ("user", "admin"):
-                    ui.label("User's Turn: Confirm Engagement")
-                    my_button("Yes", on_click=lambda: handle_user_input("yes", my_shared_state))
-                    my_button("No", on_click=lambda: handle_user_input("no", my_shared_state))
-            elif my_shared_state.turn == "user" and my_shared_state.pending_tool_name == "wait_for_user_choose_photo":
-                display_photo_selection(None, "")
-            elif my_shared_state.turn == "admin" and my_shared_state.pending_tool_name:
-                button_and_responses = get_button_and_responses_from_tool_call(
-                    my_shared_state.pending_tool_name, photo_list
-                )
-                if mode == "admin":
-                    ui.label(f"Admin: Choose for {my_shared_state.pending_tool_name}")
-                    for button_text, response in button_and_responses.items():
-                        my_button(
-                            button_text,
-                            on_click=lambda r=response: handle_user_input(r, my_shared_state),
-                        )
-                    if my_shared_state.pending_tool_name == "capture_photos":
-                        my_button("Capture Photo", on_click=camera_taking_event.emit)
-                        my_button(
-                            "Say cheese",
-                            on_click=lambda: play_tts("Say cheese! Smile big!", "HAPPY"),
-                        )
-                        my_button("3 2 1", on_click=lambda: play_tts("3 2 1", "HAPPY"))
-                else:
-                    ui.label(f"Waiting for admin to handle {my_shared_state.pending_tool_name}...")
-            elif len(master_message_list) == 1 and mode in ("user", "admin"):
-                my_button("Start Conversation", on_click=lambda: AIloop(my_shared_state))
-            else:
-                ui.label("AI is thinking...")
+                last_tool_called, last_tool_result = get_last_tool_info()
+                build_niki_ui(last_tool_called, last_tool_result)
+            handle_turn_ui(mode, my_shared_state, photo_list)
 
         if last_tool_called in ["capture_photos"]:
             cam.set_visibility(True)
