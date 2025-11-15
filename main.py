@@ -5,7 +5,14 @@ from openai import AsyncAzureOpenAI
 from dotenv import load_dotenv
 load_dotenv()
 
+from gtts import gTTS
+import uuid
+import os
+
 app.add_media_files('/assets', 'assets')
+
+if not os.path.exists('tts'):
+    os.makedirs('tts')
 
 ui.image.default_props('no-transition no-spinner')
 
@@ -33,6 +40,19 @@ client = AsyncAzureOpenAI(
 )
 
 emotions = ['HAPPY', 'SAD', 'CONFUSED']
+
+def generate_tts(text, emotion=None):
+    filename = f"{uuid.uuid4()}.mp3"
+    filepath = os.path.join('tts', filename)
+    tts = gTTS(text)
+    tts.save(filepath)
+    media_path = f'/tts/{filename}'
+    app.add_media_file(url_path=media_path, local_file=filepath)
+    return media_path
+
+def play_tts(text, emotion=None):
+    media_path = generate_tts(text, emotion)
+    ui.run_javascript(f"var audio = new Audio('{media_path}'); audio.play();")
 
 def strip_emotion_suffix(response: str) -> str:
     for emotion in emotions:
@@ -364,8 +384,7 @@ async def main_page(mode: str):
     main_container = ui.column().classes('w-full')
 
     if mode == 'niki':
-        stop_voice_event.subscribe(lambda: ui.run_javascript("window.speechSynthesis.cancel();"))
-        tts_event.subscribe(lambda text, emotion: ui.run_javascript(f"window.speechSynthesis.speak(new SpeechSynthesisUtterance(`{text}`));"))
+        tts_event.subscribe(lambda text, emotion: play_tts(text, emotion))
     if mode == 'admin':
         ui.button('Stop Voice', on_click=lambda: stop_voice_event.emit())
         ui.button('Clear Conversation', on_click=clear_conversation)
@@ -387,7 +406,7 @@ async def main_page(mode: str):
                             prefix, stripped_content = mystrip(content)
                             ui.label(f'AI ({prefix}): {stripped_content}')
                             if mode == "niki":
-                                ui.run_javascript(f"window.speechSynthesis.speak(new SpeechSynthesisUtterance(`{stripped_content}`));")
+                                play_tts(stripped_content, prefix)
                         if 'tool_calls' in msg:
                             for tool_call in msg['tool_calls']:
                                 if tool_call["function"]["name"] != 'text_to_speech_with_emotions':
