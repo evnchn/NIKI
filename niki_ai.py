@@ -3,13 +3,15 @@ from typing import Any
 
 from openai import AsyncAzureOpenAI
 
+from shared_state import SharedState
+
 # SYSTEM_PROMPT and related constants
 SYSTEM_PROMPT = """You are Niki Junior, an automated photo session assistant. Follow this flow, adapting flexibly to user responses and system states:
 
 1. Start by calling detect_presence tool.
 2. If presence detected, call get_info_for_engagement to get username and interesting photo spot, then call text_to_speech_with_emotions with emotion "HAPPY" to greet the user by name and introduce the interesting photo spot, prompting the user to take the photo together. Then call wait_for_user_engagement to check for user engagement (expect a verbal confirmation like "yes" or "ready").
 3. If engaged, call text_to_speech_with_emotions with emotion "HAPPY" to instruct the user to prepare for the photo shoot, then call capture_photos.
-4. If capture success, call text_to_speech_with_emotions with emotion "HAPPY" to prompt the user to select a photo, then call wait_for_user_choose_photo (expect photo selection via click: index 0, 1, 2, etc.).
+4. If capture success, call text_to_speech_with_emotions with emotion "HAPPY" to prompt the user to select a photo, then call wait_for_user_choose_photo (expect photo selection via click).
    - If capture fails, retry capture_photos up to 2 times. If still failing, call text_to_speech_with_emotions with emotion "SAD" to apologize, then end the session.
 5. If photo selected, call text_to_speech_with_emotions with emotion "HAPPY" to inform the user that the photo is being printed, then call print_photo.
    - If selection is invalid, prompt again once, then default to the first photo or end.
@@ -19,8 +21,9 @@ SYSTEM_PROMPT = """You are Niki Junior, an automated photo session assistant. Fo
 
 For any tool calls with failing results, try up to 5 times, then gracefully handle failure with appropriate speech and end the session if needed.
 
-Keep AI responses short and tool-focused. Use tools to block for inputs—do not assume inputs without calling tools. Before calling any tool, provide a brief response explaining what you are doing (e.g., "Checking for presence..."). For wait_for_user_engagement, specify what input you expect (e.g., "Waiting for your confirmation..."). For wait_for_user_choose_photo, always respond positively about the choice."""
+Keep AI responses short and tool-focused. Use tools to block for inputs—do not assume inputs without calling tools. Before calling any tool, provide a brief response explaining what you are doing (e.g., "Checking for presence..."). For wait_for_user_engagement, specify what input you expect (e.g., "Waiting for your confirmation..."). For wait_for_user_choose_photo, always respond positively about the choice.
 
+Tool calls may be interrupted due to user's ad-hoc inputs. If interrupted, respond to the user's input using text_to_speech_with_emotions once, then resume the original workflow by re-calling the interrupted tool or proceeding to the next step as appropriate."""
 client = AsyncAzureOpenAI(azure_deployment="gpt-4o-mini")
 emotions = ["HAPPY", "SAD", "CONFUSED"]
 
@@ -270,12 +273,32 @@ async def AIloop(shared_state):
             # If tool_calls_handled, we are waiting for user input, so break the while
         elif result.choices[0].message.content:
             master_message_list.append({"role": "assistant", "content": result.choices[0].message.content})
+            if shared_state.is_interrupting:
+                master_message_list.append(shared_state.interrupted_tool_call_message)
+                shared_state.interrupted_tool_call_message = None
+                shared_state.is_interrupting = False
         elif result.choices[0].message.refusal:
             master_message_list.append({"role": "assistant", "content": result.choices[0].message.refusal})
         render_event.emit()
 
 
-async def handle_user_input(message: str, shared_state):
+async def handle_user_input(message: str, shared_state: SharedState):
+    if message.startswith("interrupt:"):
+        user_msg = message[10:]
+        # Find the last assistant message with tool_calls
+        interrupted_msg = None
+        for msg in reversed(master_message_list):
+            if msg["role"] == "assistant" and "tool_calls" in msg:
+                interrupted_msg = msg
+                break
+        if interrupted_msg:
+            master_message_list.remove(interrupted_msg)
+            shared_state.interrupted_tool_call_message = interrupted_msg
+            shared_state.is_interrupting = True
+            await interrupt_with_user_message(user_msg, shared_state)
+            shared_state.turn = "ai"
+            await AIloop(shared_state)
+        return
     if shared_state.pending_tool_call_id:
         random_nonce = json.loads(shared_state.pending_tool_args).get("random_nonce", "")
         if shared_state.pending_tool_name == "wait_for_user_engagement":
@@ -285,7 +308,9 @@ async def handle_user_input(message: str, shared_state):
         elif shared_state.pending_tool_name == "detect_presence":
             content = json.dumps({"presence_detected": message == "yes", "random_nonce": random_nonce})
         elif shared_state.pending_tool_name == "capture_photos":
-            content = json.dumps({"capture_success": message == "yes", "random_nonce": random_nonce})
+            content = json.dumps(
+                {"capture_success": message == "yes" and len(photo_list) > 0, "random_nonce": random_nonce}
+            )
         elif shared_state.pending_tool_name == "print_photo":
             content = json.dumps({"print_success": message == "yes", "random_nonce": random_nonce})
         else:
@@ -330,6 +355,17 @@ def clear_conversation(shared_state):
     shared_state.pending_tool_call_id = None
     shared_state.pending_tool_args = None
     shared_state.pending_tool_name = None
+    shared_state.is_interrupting = False
+    shared_state.interrupted_tool_call_message = None
     photo_list.clear()
     chosen_photos.clear()
     render_event.emit()
+
+
+async def interrupt_with_user_message(user_message: str, shared_state):
+    master_message_list.append(
+        {"role": "system", "content": "Respond to the following user message, then resume the original workflow."}
+    )
+    # Add user message
+    master_message_list.append({"role": "user", "content": user_message})
+    await AIloop(shared_state)

@@ -13,7 +13,14 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 import tts
 from camera import camera
-from niki_ai import AIloop, clear_conversation, handle_user_input, master_message_list, set_globals
+from niki_ai import (
+    AIloop,
+    clear_conversation,
+    handle_user_input,
+    interrupt_with_user_message,
+    master_message_list,
+    set_globals,
+)
 from niki_utils import get_button_and_responses_from_tool_call, my_button, mydisplay, mystrip
 from photos import process_and_save_photo
 from tts import play_tts
@@ -297,6 +304,10 @@ def handle_turn_ui(mode, my_shared_state, photo_list):
         my_button("Start Conversation", on_click=lambda: AIloop(my_shared_state))
     else:
         ui.label("AI is thinking...")
+        ui.label("Debug:")
+        ui.label(my_shared_state.pending_tool_name)
+        ui.label(my_shared_state.pending_tool_call_id)
+        ui.label(my_shared_state.turn)
 
 
 @ui.page("/")
@@ -334,6 +345,19 @@ async def main_page(mode: str):
             render_event.emit()
 
         my_button("Update Global Username", on_click=update_global_username)
+
+        async def handle_interrupt(interrupt_text):
+            # if there is a tool call then handle_user_input with interrupt:
+            if my_shared_state.pending_tool_name:
+                print("Handling interrupt with tool call:", my_shared_state.pending_tool_name)
+                await handle_user_input(f"interrupt:{interrupt_text}", my_shared_state)
+            else:
+                print("Handling interrupt without tool call")
+                my_shared_state.turn = "ai"
+                await interrupt_with_user_message(interrupt_text, my_shared_state)
+
+        interrupt_input = ui.input("User message for interrupt", value="").props("dark")
+        my_button("Interrupt", on_click=lambda: handle_interrupt(interrupt_input.value))
 
     def refresh():
         main_container.clear()
@@ -394,7 +418,7 @@ def api_state_sse(request: Request):
 async def api_handle_user_input(request: Request):
     data = await request.json()
     message = data.get("message", "")
-    background_tasks.create(lambda: handle_user_input(message, my_shared_state))
+    background_tasks.create(handle_user_input(message, my_shared_state))
     return "Submitted to server, running AI loop right now."
 
 
