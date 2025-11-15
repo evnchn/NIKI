@@ -1,4 +1,5 @@
 import json
+from time import time
 from nicegui import Event, ui, app, binding, background_tasks
 from openai import AsyncAzureOpenAI
 
@@ -8,6 +9,7 @@ load_dotenv()
 from gtts import gTTS
 import uuid
 import os
+from camera import camera
 
 app.add_media_files('/assets', 'assets')
 
@@ -448,14 +450,20 @@ async def main_page(mode: str):
                 last_tool_called = None
                 for msg in reversed(master_message_list):
                     if msg['role'] == 'assistant' and 'tool_calls' in msg:
-                        last_tool_called = msg['tool_calls'][-1]['function']['name']
-                        break
+                        for tc in reversed(msg['tool_calls']):
+                            if tc['function']['name'] != 'text_to_speech_with_emotions':
+                                last_tool_called = tc['function']['name']
+                                break
+                        if last_tool_called:
+                            break
                 last_tool_result = None
                 for msg in reversed(master_message_list):
                     if msg['role'] == 'tool':
                         last_tool_result = json.loads(msg['content'])
                         break
-                if last_tool_called == 'detect_presence':
+                if last_tool_result and 'print_success' in last_tool_result and last_tool_result['print_success']:
+                    ui.image('/assets/thank_you.jpeg').classes('w-full')
+                elif last_tool_called == 'detect_presence':
                     ui.image('/assets/step_forward.jpeg').classes('w-full')
                 elif last_tool_called == 'wait_for_user_input':
                     if has_capture:
@@ -468,15 +476,13 @@ async def main_page(mode: str):
                         my_button("Continue", on_click=lambda: handle_user_input("yes"))
                         my_button("Cancel", on_click=lambda: handle_user_input("no"))
                 elif last_tool_called == 'assess_camera_framing':
-                    ui.image('/assets/view_finder.jpeg').classes('w-full')
+                    camera().classes('w-full')
                     my_button("Cancel", on_click=lambda: handle_user_input("cancel"))
                 elif last_tool_called == 'capture_photos':
-                    ui.image('/assets/view_finder.jpeg').classes('w-full')
+                    camera().classes('w-full')
                     my_button("Cancel", on_click=lambda: handle_user_input("cancel"))
                 elif last_tool_called == 'print_photo':
                     ui.image('/assets/printing_photo.jpeg').classes('w-full')
-                elif last_tool_result and 'print_success' in last_tool_result and last_tool_result['print_success']:
-                    ui.image('/assets/thank_you.jpeg').classes('w-full')
                 else:
                     ui.image('/assets/idle.jpeg').classes('w-full')
             if my_shared_state.turn == 'user' and my_shared_state.pending_tool_name == 'wait_for_user_input':
@@ -515,6 +521,7 @@ async def main_page(mode: str):
 
 @app.get('/api/state')
 def api_return_state():
+    print("API state requested at time:", time())
     return {
         'master_message_list': master_message_list,
         'turn': my_shared_state.turn,
@@ -538,5 +545,9 @@ async def api_handle_admin_choice(request):
     background_tasks.create(handle_admin_choice(choice))
     return "Submitted to server, running AI loop right now."
 
+
+@ui.page("/test/camera")
+def test_camera_page():
+    camera().classes('w-full')
 
 ui.run(port=11011, show=False)
