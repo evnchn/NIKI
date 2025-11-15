@@ -210,6 +210,18 @@ tools = [
     }
 ]
 
+def get_button_and_responses_from_tool_call(tool_name):
+    if tool_name == 'assess_camera_framing':
+        return {'Good Framing': 'good', 'Bad Framing': 'bad'}
+    elif tool_name == 'detect_presence':
+        return {'Yes': 'yes', 'No': 'no'}
+    elif tool_name == 'capture_photos':
+        return {'Captured': 'yes', 'Failed': 'no'}
+    elif tool_name == 'print_photo':
+        return {'Printed': 'yes', 'Failed': 'no'}
+    else:
+        return {}
+
 master_message_list = [
     {
         'role': 'system',
@@ -322,48 +334,41 @@ async def AIloop():
 
 async def handle_user_input(message: str):
     if my_shared_state.pending_tool_call_id:
-        master_message_list.append(
-            {
-                'role': 'tool',
-                "type": "function_call_output",
-                "tool_call_id": my_shared_state.pending_tool_call_id,
-                "content": json.dumps({
-                    "user_input": message,
-                    "random_nonce": json.loads(my_shared_state.pending_tool_args).get("random_nonce", "")
-                })
-            }
-        )
-        my_shared_state.pending_tool_call_id = None
-        my_shared_state.pending_tool_args = None
-        my_shared_state.pending_tool_name = None
-    await AIloop()
-
-async def handle_admin_choice(choice: str):
-    if my_shared_state.pending_tool_call_id:
-        if my_shared_state.pending_tool_name == 'assess_camera_framing':
+        random_nonce = json.loads(my_shared_state.pending_tool_args).get("random_nonce", "")
+        if my_shared_state.pending_tool_name == 'wait_for_user_input':
+            content = json.dumps({
+                "user_input": message,
+                "random_nonce": random_nonce
+            })
+        elif my_shared_state.pending_tool_name == 'assess_camera_framing':
             details = {
                 "good": "The subject is well-centered with appropriate headroom and balanced composition.",
                 "bad": "The subject is off-center with poor headroom and unbalanced composition."
-            }.get(choice, "Unknown quality")
+            }.get(message, "Unknown quality")
             content = json.dumps({
-                "framing_quality": choice,
+                "framing_quality": message,
                 "details": details,
-                "random_nonce": json.loads(my_shared_state.pending_tool_args).get("random_nonce", "")
+                "random_nonce": random_nonce
             })
         elif my_shared_state.pending_tool_name == 'detect_presence':
             content = json.dumps({
-                "presence_detected": choice == 'yes',
-                "random_nonce": json.loads(my_shared_state.pending_tool_args).get("random_nonce", "")
+                "presence_detected": message == 'yes',
+                "random_nonce": random_nonce
             })
         elif my_shared_state.pending_tool_name == 'capture_photos':
             content = json.dumps({
-                "capture_success": choice == 'yes',
-                "random_nonce": json.loads(my_shared_state.pending_tool_args).get("random_nonce", "")
+                "capture_success": message == 'yes',
+                "random_nonce": random_nonce
             })
         elif my_shared_state.pending_tool_name == 'print_photo':
             content = json.dumps({
-                "print_success": choice == 'yes',
-                "random_nonce": json.loads(my_shared_state.pending_tool_args).get("random_nonce", "")
+                "print_success": message == 'yes',
+                "random_nonce": random_nonce
+            })
+        else:
+            content = json.dumps({
+                "error": f"Unknown tool response: {message}",
+                "random_nonce": random_nonce
             })
         master_message_list.append(
             {
@@ -376,8 +381,9 @@ async def handle_admin_choice(choice: str):
         my_shared_state.pending_tool_call_id = None
         my_shared_state.pending_tool_args = None
         my_shared_state.pending_tool_name = None
-        my_shared_state.turn = 'ai'
-        await AIloop()
+        if my_shared_state.turn == 'admin':
+            my_shared_state.turn = 'ai'
+    await AIloop()
 
 def clear_conversation():
     master_message_list.clear()
@@ -495,23 +501,11 @@ async def main_page(mode: str):
                     my_button('Send', on_click=lambda: handle_user_input(
                         user_input.value))
             elif my_shared_state.turn == 'admin' and my_shared_state.pending_tool_name:
+                button_and_responses = get_button_and_responses_from_tool_call(my_shared_state.pending_tool_name)
                 if mode == 'admin':
-                    if my_shared_state.pending_tool_name == 'assess_camera_framing':
-                        ui.label("Admin: Choose camera framing quality")
-                        my_button('Good Framing', on_click=lambda: handle_admin_choice('good'))
-                        my_button('Bad Framing', on_click=lambda: handle_admin_choice('bad'))
-                    elif my_shared_state.pending_tool_name == 'detect_presence':
-                        ui.label("Admin: Confirm presence detection")
-                        my_button('Yes', on_click=lambda: handle_admin_choice('yes'))
-                        my_button('No', on_click=lambda: handle_admin_choice('no'))
-                    elif my_shared_state.pending_tool_name == 'capture_photos':
-                        ui.label("Admin: Confirm photo capture")
-                        my_button('Captured', on_click=lambda: handle_admin_choice('yes'))
-                        my_button('Failed', on_click=lambda: handle_admin_choice('no'))
-                    elif my_shared_state.pending_tool_name == 'print_photo':
-                        ui.label("Admin: Confirm printing")
-                        my_button('Printed', on_click=lambda: handle_admin_choice('yes'))
-                        my_button('Failed', on_click=lambda: handle_admin_choice('no'))
+                    ui.label(f"Admin: Choose for {my_shared_state.pending_tool_name}")
+                    for button_text, response in button_and_responses.items():
+                        my_button(button_text, on_click=lambda r=response: handle_user_input(r))
                 else:
                     ui.label(f"Waiting for admin to handle {my_shared_state.pending_tool_name}...")
             elif len(master_message_list) == 1 and mode in ('user', 'admin'):
@@ -532,6 +526,7 @@ def api_return_state():
         'pending_tool_name': my_shared_state.pending_tool_name,
         'pending_tool_args': my_shared_state.pending_tool_args,
         'latest_tts_path': latest_tts_path,
+        'button_and_responses': get_button_and_responses_from_tool_call(my_shared_state.pending_tool_name) if my_shared_state.pending_tool_name else {},
     }
 
 @app.post('/api/handle_user_input')
@@ -539,13 +534,6 @@ async def api_handle_user_input(request: Request):
     data = await request.json()
     message = data.get('message', '')
     background_tasks.create(handle_user_input(message))
-    return "Submitted to server, running AI loop right now."
-
-@app.post('/api/handle_admin_choice')
-async def api_handle_admin_choice(request: Request):
-    data = await request.json()
-    choice = data.get('choice', '')
-    background_tasks.create(handle_admin_choice(choice))
     return "Submitted to server, running AI loop right now."
 
 @app.post('/api/save_photo')
