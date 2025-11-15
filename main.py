@@ -15,6 +15,8 @@ from gtts import gTTS
 import uuid
 import os
 import base64
+from PIL import Image
+from io import BytesIO
 from camera import camera
 
 app.add_media_files('/assets', 'assets')
@@ -647,11 +649,54 @@ async def save_photo(request: Request):
     else:
         filetype = 'png'
     image_bytes = base64.b64decode(encoded)
+    # Process image with PIL
+    image = Image.open(BytesIO(image_bytes))
+
+    # Crop to 14:9 aspect ratio (horizontal) so that resizing to 1400x900
+    # won't distort the image (final image after 50px border will be 1500x1000)
+    width, height = image.size
+    aspect = 14 / 9
+    if width / height > aspect:
+        new_width = int(height * aspect)
+        left = (width - new_width) // 2
+        right = left + new_width
+        top = 0
+        bottom = height
+    else:
+        new_height = int(width / aspect)
+        top = (height - new_height) // 2
+        bottom = top + new_height
+        left = 0
+        right = width
+
+    cropped = image.crop((left, top, right, bottom)).convert('RGB')
+
+    # Resize to 1400x900 (inner area); after adding 50px border on each side
+    # final image will be 1500x1000
+    target_size = (1400, 900)
+    resized = cropped.resize(target_size, Image.LANCZOS)
+
+    # Add 50px white border outward (final size 1500x1000)
+    border_px = 50
+    bordered_width = resized.width + border_px * 2
+    bordered_height = resized.height + border_px * 2
+    bordered = Image.new('RGB', (bordered_width, bordered_height), (255, 255, 255))
+    bordered.paste(resized, (border_px, border_px))
+
+    # Save to buffer
+    buffer = BytesIO()
+    if filetype == 'jpg':
+        bordered.save(buffer, format='JPEG')
+    else:
+        bordered.save(buffer, format='PNG')
+    buffer.seek(0)
+    processed_bytes = buffer.getvalue()
+
     os.makedirs('user_photos', exist_ok=True)
     filename = f"user_photos/photo_{int(time())}.{filetype}"
     photo_list.append(filename)
     with open(filename, 'wb') as f:
-        f.write(image_bytes)
+        f.write(processed_bytes)
     return {"success": True, "filename": filename}
 
 @ui.page('/xiaomicam/photo')
