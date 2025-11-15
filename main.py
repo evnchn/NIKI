@@ -18,6 +18,7 @@ import base64
 from PIL import Image
 from io import BytesIO
 from camera import camera
+from niki_utils import mystrip, get_button_and_responses_from_tool_call
 
 app.add_media_files('/assets', 'assets')
 app.add_media_files('/user_photos', 'user_photos')
@@ -114,21 +115,7 @@ def play_tts(text, emotion=None):
     media_path = generate_tts(text, emotion)
     ui.run_javascript(f"window.currentAudio = new Audio('{media_path}'); window.currentAudio.play();")
 
-def strip_emotion_suffix(response: str) -> str:
-    for emotion in emotions:
-        if response.endswith(emotion):
-            return emotion, response[:-len(emotion)]
-    return "", response
-
-def strip_bad_starting_characters(response: str) -> str:
-    bad_starting_characters = ['.', ',', '!', '?', ';', ':', ' ']
-    while response and response[0] in bad_starting_characters:
-        response = response[1:]
-    return response
-
-def mystrip(response: str) -> str:
-    prefix, stripped_response = strip_emotion_suffix(response)
-    return prefix, strip_bad_starting_characters(stripped_response)
+## Helper functions moved to `niki_utils.py` to reduce duplication and centralize behavior.
 
 def mydisplay(line1, line2):
     with ui.column().classes('aspect-3/2 w-full items-center'):
@@ -259,20 +246,7 @@ tools = [
     }
 ]
 
-def get_button_and_responses_from_tool_call(tool_name):
-    if tool_name == 'detect_presence':
-        return {'Yes': 'yes', 'No': 'no'}
-    elif tool_name == 'wait_for_user_engagement':
-        # Allow admin to confirm engagement as well
-        return {'Yes': 'yes', 'No': 'no'}
-    elif tool_name == 'capture_photos':
-        return {'Captured': 'yes', 'Failed': 'no'}
-    elif tool_name == 'print_photo':
-        return {'Printed': 'yes', 'Failed': 'no'}
-    elif tool_name == 'wait_for_user_choose_photo':
-        return {f'Photo {i+1}': str(i) for i in range(len(photo_list))}
-    else:
-        return {}
+## Button->response mapping moved to `niki_utils.get_button_and_responses_from_tool_call`
 
 master_message_list = [
     {
@@ -570,7 +544,7 @@ async def main_page(mode: str):
                         img = ui.image(f'/user_photos/{os.path.basename(photo)}').classes('w-1/3')
                         img.on('click', lambda e, i=i: handle_user_input(str(i)))
             elif my_shared_state.turn == 'admin' and my_shared_state.pending_tool_name:
-                button_and_responses = get_button_and_responses_from_tool_call(my_shared_state.pending_tool_name)
+                button_and_responses = get_button_and_responses_from_tool_call(my_shared_state.pending_tool_name, photo_list)
                 if mode == 'admin':
                     ui.label(f"Admin: Choose for {my_shared_state.pending_tool_name}")
                     for button_text, response in button_and_responses.items():
@@ -602,7 +576,7 @@ def get_state():
         'pending_tool_name': my_shared_state.pending_tool_name,
         'pending_tool_args': my_shared_state.pending_tool_args,
         'latest_tts_path': latest_tts_path,
-        'button_and_responses': get_button_and_responses_from_tool_call(my_shared_state.pending_tool_name) if my_shared_state.pending_tool_name else {},
+    'button_and_responses': get_button_and_responses_from_tool_call(my_shared_state.pending_tool_name, photo_list) if my_shared_state.pending_tool_name else {},
         'event_uuids': event_uuids,
     }
 
