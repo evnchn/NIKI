@@ -41,13 +41,17 @@ client = AsyncAzureOpenAI(
 
 emotions = ['HAPPY', 'SAD', 'CONFUSED']
 
+latest_tts_path = None
+
 def generate_tts(text, emotion=None):
+    global latest_tts_path
     filename = f"{uuid.uuid4()}.mp3"
     filepath = os.path.join('tts', filename)
     tts = gTTS(text)
     tts.save(filepath)
     media_path = f'/tts/{filename}'
     app.add_media_file(url_path=media_path, local_file=filepath)
+    latest_tts_path = media_path
     return media_path
 
 def play_tts(text, emotion=None):
@@ -506,6 +510,7 @@ def api_return_state():
         'pending_tool_call_id': my_shared_state.pending_tool_call_id,
         'pending_tool_name': my_shared_state.pending_tool_name,
         'pending_tool_args': my_shared_state.pending_tool_args,
+        'latest_tts_path': latest_tts_path,
     }
 
 @app.post('/api/handle_user_input')
