@@ -47,7 +47,7 @@ ui.image.default_props('no-transition no-spinner')
 SYSTEM_PROMPT = '''You are Niki, an automated photo session assistant. Follow this flow, adapting flexibly to user responses and system states:
 
 1. Start by calling detect_presence tool.
-2. If presence detected, call text_to_speech_with_emotions with emotion "HAPPY" to say hello and explain who you are (e.g., "Hello! I'm Niki, your friendly photo assistant. Let's take some fun pictures!"), then call wait_for_user_input to check for user engagement (expect a verbal confirmation like "yes" or "ready").
+2. If presence detected, call text_to_speech_with_emotions with emotion "HAPPY" to say hello and explain who you are (e.g., "Hello! I'm Niki, your friendly photo assistant. Let's take some fun pictures!"), then call wait_for_user_engagement to check for user engagement (expect a verbal confirmation like "yes" or "ready").
 3. If engaged, call text_to_speech_with_emotions with emotion "HAPPY" to tell the user to get ready for a photo shoot (e.g., "Great! Simply move into camera, and I will take the photos for you at the right moment!"), then call capture_photos.
 4. If capture success, call text_to_speech_with_emotions with emotion "HAPPY" to ask the user to select a photo (e.g., "Awesome shots! Which one do you like best? Click on your favorite photo."), then call wait_for_user_choose_photo (expect photo selection via click: index 0, 1, 2, etc.).
    - If capture fails, retry capture_photos up to 2 times. If still failing, call text_to_speech_with_emotions with emotion "SAD" to apologize (e.g., "Sorry, there was an issue taking the photo. Let's try again later."), then end the session.
@@ -59,7 +59,7 @@ SYSTEM_PROMPT = '''You are Niki, an automated photo session assistant. Follow th
 
 For any tool calls with failing results, try up to 5 times, then gracefully handle failure with appropriate speech and end the session if needed.
 
-Keep AI responses short and tool-focused. Use tools to block for inputs—do not assume inputs without calling tools. Before calling any tool, provide a brief response explaining what you are doing (e.g., "Checking for presence..."). For wait_for_user_input, specify what input you expect (e.g., "Waiting for your confirmation..."). For wait_for_user_choose_photo, always respond positively about the choice.'''
+Keep AI responses short and tool-focused. Use tools to block for inputs—do not assume inputs without calling tools. Before calling any tool, provide a brief response explaining what you are doing (e.g., "Checking for presence..."). For wait_for_user_engagement, specify what input you expect (e.g., "Waiting for your confirmation..."). For wait_for_user_choose_photo, always respond positively about the choice.'''
 
 client = AsyncAzureOpenAI(
     azure_deployment='gpt-4o-mini'
@@ -102,12 +102,19 @@ def mystrip(response: str) -> str:
     prefix, stripped_response = strip_emotion_suffix(response)
     return prefix, strip_bad_starting_characters(stripped_response)
 
+def mydisplay(line1, line2):
+    with ui.column().classes('aspect-3/2 w-full items-center'):
+        ui.space()
+        ui.label(line1).classes('text-6xl')
+        ui.label(line2).classes('text-3xl')
+        ui.space()
+
 tools = [
     {
         "type": "function",
         "function": {
-            "name": "wait_for_user_input",
-            "description": "Wait for the user to provide input before continuing the conversation.",
+            "name": "wait_for_user_engagement",
+            "description": "Wait for user engagement confirmation (yes/no).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -227,6 +234,9 @@ tools = [
 def get_button_and_responses_from_tool_call(tool_name):
     if tool_name == 'detect_presence':
         return {'Yes': 'yes', 'No': 'no'}
+    elif tool_name == 'wait_for_user_engagement':
+        # Allow admin to confirm engagement as well
+        return {'Yes': 'yes', 'No': 'no'}
     elif tool_name == 'capture_photos':
         return {'Captured': 'yes', 'Failed': 'no'}
     elif tool_name == 'print_photo':
@@ -289,7 +299,7 @@ async def AIloop():
             for tool_call in result.choices[0].message.tool_calls:
                 tool_name = tool_call.function.name
                 tool_args = tool_call.function.arguments
-                if tool_name == 'wait_for_user_input':
+                if tool_name == 'wait_for_user_engagement':
                     my_shared_state.pending_tool_call_id = tool_call.id
                     my_shared_state.pending_tool_args = tool_args
                     my_shared_state.pending_tool_name = tool_name
@@ -351,9 +361,9 @@ async def AIloop():
 async def handle_user_input(message: str):
     if my_shared_state.pending_tool_call_id:
         random_nonce = json.loads(my_shared_state.pending_tool_args).get("random_nonce", "")
-        if my_shared_state.pending_tool_name == 'wait_for_user_input':
+        if my_shared_state.pending_tool_name == 'wait_for_user_engagement':
             content = json.dumps({
-                "user_input": message,
+                "engagement": message.lower() == "yes",
                 "random_nonce": random_nonce
             })
         elif my_shared_state.pending_tool_name == 'wait_for_user_choose_photo':
@@ -478,8 +488,8 @@ async def main_page(mode: str):
                         result = json.loads(content)
                         if 'framing_quality' in result:
                             ui.label(f'Camera framing assessed: {result["framing_quality"]} - {result["details"]}')
-                        elif 'user_input' in result:
-                            ui.label(f'User input: {result["user_input"]}')
+                        elif 'engagement' in result:
+                            ui.label(f'User engagement: {result["engagement"]}')
                         elif 'chosen_photo' in result:
                             ui.label(f'Chosen photo: {result["chosen_photo"]}')
                         elif 'presence_detected' in result:
@@ -512,7 +522,11 @@ async def main_page(mode: str):
                 if last_tool_result and 'print_success' in last_tool_result and last_tool_result['print_success']:
                     ui.image('/assets/thank_you.jpeg').classes('w-full')
                 elif last_tool_called == 'detect_presence':
-                    ui.image('/assets/step_forward.jpeg').classes('w-full')
+                    # ('/assets/step_forward.jpeg').classes('w-full')
+                    mydisplay("ヽ(＾Д＾)ﾉ", "Please step forward!")
+                elif last_tool_called == 'wait_for_user_engagement':
+                    # Show friendly waiting prompt on the Niki screen
+                    mydisplay("ヽ(＾Д＾)ﾉ", "Waiting for your confirmation...")
                 elif last_tool_called == 'wait_for_user_choose_photo':
                     with ui.row().classes("w-full"):
                         for i, photo in enumerate(photo_list):
@@ -523,13 +537,13 @@ async def main_page(mode: str):
                 elif last_tool_called == 'print_photo':
                     ui.image('/assets/printing_photo.jpeg').classes('w-full')
                 else:
-                    ui.image('/assets/idle.jpeg').classes('w-full')
-            if my_shared_state.turn == 'user' and my_shared_state.pending_tool_name == 'wait_for_user_input':
-                if mode != 'niki':
-                    ui.label("User's Turn")
-                    user_input = ui.input(placeholder='Type your message...')
-                    my_button('Send', on_click=lambda: handle_user_input(
-                        user_input.value))
+                    # ('/assets/idle.jpeg').classes('w-full')
+                    mydisplay("(ᴗ˳ᴗ)ᶻ𝗓𐰁 .ᐟ", "Idle...")
+            if my_shared_state.turn == 'user' and my_shared_state.pending_tool_name == 'wait_for_user_engagement':
+                if mode in ('user', 'admin'):
+                    ui.label("User's Turn: Confirm Engagement")
+                    my_button('Yes', on_click=lambda: handle_user_input("yes"))
+                    my_button('No', on_click=lambda: handle_user_input("no"))
             elif my_shared_state.turn == 'user' and my_shared_state.pending_tool_name == 'wait_for_user_choose_photo':
                 with ui.row():
                     for i, photo in enumerate(photo_list):

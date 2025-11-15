@@ -34,7 +34,7 @@
     - Yes → Prompt again (loop to greeting)
     - No → Wait (loop)
 
-*Annotation: AI speaks prompts, waits for user input via `wait_for_user_input` tool. Engagement could be voice, gesture, or button press.*
+*Annotation: AI speaks prompts, waits for user input via `wait_for_user_engagement` tool. Engagement could be voice, gesture, or button press. Both user and admin can press Yes/No buttons. In Niki mode, a friendly emoji and message are displayed while waiting.*
 
 ---
 
@@ -93,7 +93,7 @@
       - No → Go to 7. Print (with default or no photo)
     - No → Go to 7. Print
 
-*Annotation: Use UI for display, `wait_for_user_input` for selection. Track redo count.*
+*Annotation: Use UI for display, `wait_for_user_choose_photo` for selection. Track redo count.*
 
 ---
 
