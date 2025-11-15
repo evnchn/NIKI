@@ -171,7 +171,18 @@ def display_message(msg):
             ui.label(f"Tool result: {result}")
 
 
-def build_user_admin_ui(mode):
+def build_main_ui(mode):
+    last_tool_called = None
+    if mode != "niki":
+        build_user_admin_ui()
+    else:
+        last_tool_called, last_tool_result = get_last_tool_info()
+        build_niki_ui(last_tool_called, last_tool_result)
+    handle_turn_ui(mode, my_shared_state, photo_list)
+    return last_tool_called
+
+
+def build_user_admin_ui():
     for msg in master_message_list:
         display_message(msg)
 
@@ -238,15 +249,9 @@ async def main_page(mode: str):
         my_button("Clear Conversation", on_click=lambda: clear_conversation(my_shared_state))
 
     def refresh():
-        last_tool_called = None
         main_container.clear()
         with main_container:
-            if mode != "niki":
-                build_user_admin_ui(mode)
-            else:
-                last_tool_called, last_tool_result = get_last_tool_info()
-                build_niki_ui(last_tool_called, last_tool_result)
-            handle_turn_ui(mode, my_shared_state, photo_list)
+            last_tool_called = build_main_ui(mode)
 
         if last_tool_called in ["capture_photos"]:
             cam.set_visibility(True)
