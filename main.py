@@ -11,12 +11,11 @@ from sse_starlette.sse import EventSourceResponse
 from dotenv import load_dotenv
 load_dotenv()
 
-from gtts import gTTS
 import uuid
 import os
-import base64
-from PIL import Image
-from io import BytesIO
+import tts
+from tts import play_tts
+from photos import process_and_save_photo
 from camera import camera
 from niki_utils import mystrip, get_button_and_responses_from_tool_call
 
@@ -96,24 +95,7 @@ client = AsyncAzureOpenAI(
 
 emotions = ['HAPPY', 'SAD', 'CONFUSED']
 
-latest_tts_path = None
-
 capture_done = False
-
-def generate_tts(text, emotion=None):
-    global latest_tts_path
-    filename = f"{uuid.uuid4()}.mp3"
-    filepath = os.path.join('tts', filename)
-    tts = gTTS(text)
-    tts.save(filepath)
-    media_path = f'/tts/{filename}'
-    app.add_media_file(url_path=media_path, local_file=filepath)
-    latest_tts_path = media_path
-    return media_path
-
-def play_tts(text, emotion=None):
-    media_path = generate_tts(text, emotion)
-    ui.run_javascript(f"window.currentAudio = new Audio('{media_path}'); window.currentAudio.play();")
 
 ## Helper functions moved to `niki_utils.py` to reduce duplication and centralize behavior.
 
@@ -575,7 +557,7 @@ def get_state():
         'pending_tool_call_id': my_shared_state.pending_tool_call_id,
         'pending_tool_name': my_shared_state.pending_tool_name,
         'pending_tool_args': my_shared_state.pending_tool_args,
-        'latest_tts_path': latest_tts_path,
+        'latest_tts_path': tts.latest_tts_path,
     'button_and_responses': get_button_and_responses_from_tool_call(my_shared_state.pending_tool_name, photo_list) if my_shared_state.pending_tool_name else {},
         'event_uuids': event_uuids,
     }
@@ -615,62 +597,11 @@ async def api_handle_user_input(request: Request):
 @app.post('/api/save_photo')
 async def save_photo(request: Request):
     data = await request.json()
-    image_data = data['b64url']
-    print("image_data preview:", image_data[:30], "...")
-    header, encoded = image_data.split(',', 1)
-    if header == 'data:image/jpeg;base64' or header == 'data:image/jpg;base64':
-        filetype = 'jpg'
-    else:
-        filetype = 'png'
-    image_bytes = base64.b64decode(encoded)
-    # Process image with PIL
-    image = Image.open(BytesIO(image_bytes))
-
-    # Crop to 14:9 aspect ratio (horizontal) so that resizing to 1400x900
-    # won't distort the image (final image after 50px border will be 1500x1000)
-    width, height = image.size
-    aspect = 14 / 9
-    if width / height > aspect:
-        new_width = int(height * aspect)
-        left = (width - new_width) // 2
-        right = left + new_width
-        top = 0
-        bottom = height
-    else:
-        new_height = int(width / aspect)
-        top = (height - new_height) // 2
-        bottom = top + new_height
-        left = 0
-        right = width
-
-    cropped = image.crop((left, top, right, bottom)).convert('RGB')
-
-    # Resize to 1400x900 (inner area); after adding 50px border on each side
-    # final image will be 1500x1000
-    target_size = (1400, 900)
-    resized = cropped.resize(target_size, Image.LANCZOS)
-
-    # Add 50px white border outward (final size 1500x1000)
-    border_px = 50
-    bordered_width = resized.width + border_px * 2
-    bordered_height = resized.height + border_px * 2
-    bordered = Image.new('RGB', (bordered_width, bordered_height), (255, 255, 255))
-    bordered.paste(resized, (border_px, border_px))
-
-    # Save to buffer
-    buffer = BytesIO()
-    if filetype == 'jpg':
-        bordered.save(buffer, format='JPEG')
-    else:
-        bordered.save(buffer, format='PNG')
-    buffer.seek(0)
-    processed_bytes = buffer.getvalue()
-
-    os.makedirs('user_photos', exist_ok=True)
-    filename = f"user_photos/photo_{int(time())}.{filetype}"
+    image_data = data.get('b64url')
+    print("image_data preview:", (image_data or '')[:30], "...")
+    # Delegate processing to photos.process_and_save_photo
+    filename = process_and_save_photo(image_data)
     photo_list.append(filename)
-    with open(filename, 'wb') as f:
-        f.write(processed_bytes)
     return {"success": True, "filename": filename}
 
 @ui.page('/xiaomicam/photo')
