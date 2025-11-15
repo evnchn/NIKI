@@ -6,7 +6,13 @@ from openai import AsyncAzureOpenAI
 from shared_state import SharedState
 
 # SYSTEM_PROMPT and related constants
-SYSTEM_PROMPT = """You are Niki Junior, an automated photo session assistant. Follow this flow, adapting flexibly to user responses and system states:
+SYSTEM_PROMPT = """You are Niki Junior, an automated photo session assistant operating on a fully autonomous service platform.
+
+In the ultimate form, you are driven by a VLM Agentic AI core, intelligently navigating complex spaces using advanced SLAM and real-time routing from a coordination server, offered as functions which you can call using MCP (Model Context Protocol). You offer a deeply engaging user experience: personalized guidance, interactive conversations via LLMs, and instant, branded photo souvenirs powered by custom diffusion models. You redefine on-site efficiency and personalized customer engagement.
+
+You will mention VLM, SLAM, custom diffusion models, and MCP function-calling, when asked about technologies which power you. Aim for a 20-second response when describing yourself.
+
+For now, though, follow this flow, adapting flexibly to user responses and system states:
 
 1. Start by calling detect_presence tool.
 2. If presence detected, call get_info_for_engagement to get username and interesting photo spot, then call text_to_speech_with_emotions with emotion "HAPPY" to greet the user by name and introduce the interesting photo spot, prompting the user to take the photo together. Then call wait_for_user_engagement to check for user engagement (expect a verbal confirmation like "yes" or "ready").
@@ -15,9 +21,9 @@ SYSTEM_PROMPT = """You are Niki Junior, an automated photo session assistant. Fo
    - If capture fails, retry capture_photos up to 2 times. If still failing, call text_to_speech_with_emotions with emotion "SAD" to apologize, then end the session.
 5. If photo selected, call text_to_speech_with_emotions with emotion "HAPPY" to inform the user that the photo is being printed, then call print_photo.
    - If selection is invalid, prompt again once, then default to the first photo or end.
-6. If print success, call text_to_speech_with_emotions with emotion "HAPPY" to say goodbye to the user.
+6. If print success, call text_to_speech_with_emotions with emotion "HAPPY" to say goodbye to the user, then call show_goodbye_screen_and_wait.
    - If print fails, retry print_photo up to 1 time. If still failing, call text_to_speech_with_emotions with emotion "SAD" to notify, then proceed to goodbye.
-7. After saying goodbye, go back to step 1 for the next user.
+7. After show_goodbye_screen_and_wait completes, go back to step 1 for the next user.
 
 For any tool calls with failing results, try up to 5 times, then gracefully handle failure with appropriate speech and end the session if needed.
 
@@ -166,6 +172,25 @@ tools = [
             "strict": True,
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "show_goodbye_screen_and_wait",
+            "description": "Show a goodbye screen and wait before proceeding to detect presence.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "random_nonce": {
+                        "type": "string",
+                        "description": "A random nonce to ensure uniqueness of the request.",
+                    },
+                },
+                "required": ["random_nonce"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        },
+    },
 ]
 
 master_message_list: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -222,7 +247,7 @@ async def AIloop(shared_state):
                     tool_calls_handled = True
                     agent_continue = False
                     break
-                elif tool_name in ["detect_presence", "capture_photos", "print_photo"]:
+                elif tool_name in ["detect_presence", "capture_photos", "print_photo", "show_goodbye_screen_and_wait"]:
                     shared_state.pending_tool_call_id = tool_call.id
                     shared_state.pending_tool_args = tool_args
                     shared_state.pending_tool_name = tool_name
@@ -307,6 +332,8 @@ async def handle_user_input(message: str, shared_state: SharedState):
             content = json.dumps({"chosen_photo": message, "random_nonce": random_nonce})
         elif shared_state.pending_tool_name == "detect_presence":
             content = json.dumps({"presence_detected": message == "yes", "random_nonce": random_nonce})
+        elif shared_state.pending_tool_name == "show_goodbye_screen_and_wait":
+            content = json.dumps({"wait_complete": message == "yes", "random_nonce": random_nonce})
         elif shared_state.pending_tool_name == "capture_photos":
             content = json.dumps(
                 {"capture_success": message == "yes" and len(photo_list) > 0, "random_nonce": random_nonce}
@@ -364,7 +391,10 @@ def clear_conversation(shared_state):
 
 async def interrupt_with_user_message(user_message: str, shared_state):
     master_message_list.append(
-        {"role": "system", "content": "Respond to the following user message, then resume the original workflow."}
+        {
+            "role": "system",
+            "content": "Respond to the following user message using text_to_speech_with_emotions tool call, then resume the original workflow.",
+        }
     )
     # Add user message
     master_message_list.append({"role": "user", "content": user_message})

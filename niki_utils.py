@@ -57,5 +57,7 @@ def get_button_and_responses_from_tool_call(tool_name: str, photo_list: list[str
         return {"Printed": "yes", "Failed": "no"}
     elif tool_name == "wait_for_user_choose_photo":
         return {f"Photo {i + 1}": str(i) for i in range(len(photo_list))}
+    elif tool_name == "show_goodbye_screen_and_wait":
+        return {"Next": "yes"}
     else:
         return {}

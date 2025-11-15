@@ -174,10 +174,18 @@ def get_last_tool_info():
 
 
 def display_photo_selection(row_classes="w-full"):
+    async def choose_image_and_clear_list(i: str, my_shared_state):
+        global photo_list
+        index = int(i)
+        chosen_photo = photo_list[index]
+        chosen_photos.append(chosen_photo)
+        photo_list = []  # clear photo list after selection
+        await handle_user_input(f"choose_photo:{index}", my_shared_state)
+
     with ui.row().classes(row_classes):
         for i, photo in enumerate(photo_list):
             img = ui.image(f"/user_photos/{os.path.basename(photo)}").classes("w-1/3")
-            img.on("click", lambda e, i=i: handle_user_input(str(i), my_shared_state))
+            img.on("click", lambda e, i=i: choose_image_and_clear_list(str(i), my_shared_state))
 
 
 def build_niki_ui(last_tool_called, last_tool_result):
@@ -214,6 +222,8 @@ def api_get_niki_ui(last_tool_called, last_tool_result):
         return {"type": "button", "text": "Cancel", "state": "CAPTURE_PHOTOS"}
     elif last_tool_called == "print_photo":
         return {"type": "image", "src": "/assets/printing_photo.jpeg", "state": "PRINT_PHOTO"}
+    elif last_tool_called == "show_goodbye_screen_and_wait":
+        return {"type": "display", "emoji": "👋", "text": "Goodbye!", "state": "GOODBYE"}
     elif last_tool_called == "get_info_for_engagement":
         return {"type": "display", "emoji": "(╭ರ_•́)", "text": "Thinking...", "state": "THINKING"}
     else:
