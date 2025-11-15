@@ -414,4 +414,4 @@ def test_camera_page():
     ui.button("Capture", on_click=lambda: cam.capture())
 
 
-ui.run(port=11011, show=False)
+ui.run(port=11011, show=False, storage_secret=os.environ["STORAGE_SECRET"])
