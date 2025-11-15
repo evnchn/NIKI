@@ -121,20 +121,41 @@ def display_photo_selection(row_classes="w-full"):
 
 
 def build_niki_ui(last_tool_called, last_tool_result):
-    if last_tool_result and "print_success" in last_tool_result and last_tool_result["print_success"]:
-        ui.image("/assets/thank_you.jpeg").classes("w-full")
-    elif last_tool_called == "detect_presence":
-        mydisplay("ヽ(＾Д＾)ﾉ", "Please step forward!")
-    elif last_tool_called == "wait_for_user_engagement":
-        mydisplay("ヽ(＾Д＾)ﾉ", "Waiting for your confirmation...")
-    elif last_tool_called == "wait_for_user_choose_photo":
+    ui_state = api_get_niki_ui(last_tool_called, last_tool_result)
+    if ui_state["type"] == "image":
+        ui.image(ui_state["src"]).classes("w-full")
+    elif ui_state["type"] == "display":
+        mydisplay(ui_state["emoji"], ui_state["text"])
+    elif ui_state["type"] == "photo_selection":
         display_photo_selection()
+    elif ui_state["type"] == "button":
+        my_button(ui_state["text"], on_click=lambda: handle_user_input("cancel"))
+
+
+def api_get_niki_ui(last_tool_called, last_tool_result):
+    if last_tool_result and "print_success" in last_tool_result and last_tool_result["print_success"]:
+        return {"type": "image", "src": "/assets/thank_you.jpeg", "state": "PRINT_SUCCESS"}
+    elif last_tool_called == "detect_presence":
+        return {"type": "display", "emoji": "ヽ(＾Д＾)ﾉ", "text": "Please step forward!", "state": "DETECT_PRESENCE"}
+    elif last_tool_called == "wait_for_user_engagement":
+        return {
+            "type": "display",
+            "emoji": "ヽ(＾Д＾)ﾉ",
+            "text": "Waiting for your confirmation...",
+            "state": "WAIT_FOR_USER_ENGAGEMENT",
+        }
+    elif last_tool_called == "wait_for_user_choose_photo":
+        return {
+            "type": "photo_selection",
+            "photos": [f"/user_photos/{os.path.basename(photo)}" for photo in photo_list],
+            "state": "WAIT_FOR_USER_CHOOSE_PHOTO",
+        }
     elif last_tool_called == "capture_photos":
-        my_button("Cancel", on_click=lambda: handle_user_input("cancel"))
+        return {"type": "button", "text": "Cancel", "state": "CAPTURE_PHOTOS"}
     elif last_tool_called == "print_photo":
-        ui.image("/assets/printing_photo.jpeg").classes("w-full")
+        return {"type": "image", "src": "/assets/printing_photo.jpeg", "state": "PRINT_PHOTO"}
     else:
-        mydisplay("(ᴗ˳ᴗ)ᶻ𝗓𐰁 .ᐟ", "Idle...")
+        return {"type": "display", "emoji": "(ᴗ˳ᴗ)ᶻ𝗓𐰁 .ᐟ", "text": "Idle...", "state": "IDLE"}
 
 
 def display_message(msg):
@@ -263,6 +284,7 @@ async def main_page(mode: str):
 
 
 def get_state():
+    last_tool_called, last_tool_result = get_last_tool_info()
     return {
         "master_message_list": master_message_list,
         "turn": my_shared_state.turn,
@@ -274,6 +296,7 @@ def get_state():
         if my_shared_state.pending_tool_name
         else {},
         "event_uuids": event_uuids,
+        "niku_ui_state": api_get_niki_ui(last_tool_called, last_tool_result),
     }
 
 
