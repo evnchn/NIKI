@@ -296,7 +296,7 @@ def get_state():
         if my_shared_state.pending_tool_name
         else {},
         "event_uuids": event_uuids,
-        "niku_ui_state": api_get_niki_ui(last_tool_called, last_tool_result),
+        "niki_ui_state": api_get_niki_ui(last_tool_called, last_tool_result),
     }
 
 
