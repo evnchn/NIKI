@@ -11,6 +11,13 @@ import os
 
 app.add_media_files('/assets', 'assets')
 
+ui.add_css("""
+body {
+    background-color: rgb(0, 101, 100);
+}
+""", shared=True)
+ui.label.default_classes("text-white")
+
 if not os.path.exists('tts'):
     os.makedirs('tts')
 
