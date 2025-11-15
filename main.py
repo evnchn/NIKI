@@ -529,4 +529,4 @@ async def api_handle_admin_choice(request):
     return "Submitted to server, running AI loop right now."
 
 
-ui.run()
+ui.run(port=11011, show=False)
