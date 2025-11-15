@@ -535,14 +535,14 @@ def api_return_state():
     }
 
 @app.post('/api/handle_user_input')
-async def api_handle_user_input(request):
+async def api_handle_user_input(request: Request):
     data = await request.json()
     message = data.get('message', '')
     background_tasks.create(handle_user_input(message))
     return "Submitted to server, running AI loop right now."
 
 @app.post('/api/handle_admin_choice')
-async def api_handle_admin_choice(request):
+async def api_handle_admin_choice(request: Request):
     data = await request.json()
     choice = data.get('choice', '')
     background_tasks.create(handle_admin_choice(choice))
