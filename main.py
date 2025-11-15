@@ -406,8 +406,6 @@ async def main_page(mode: str):
     cam = camera().classes("w-full")
     cam.set_visibility(False)
 
-
-
     main_container = ui.column().classes("w-full")
 
     if mode == "niki":
