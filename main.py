@@ -297,6 +297,84 @@ def build_main_ui(mode):
     return last_tool_called
 
 
+def build_user_admin_ui():
+    for msg in master_message_list:
+        display_message(msg)
+
+
+def build_state_display(ui_state):
+    states_order = [
+        "IDLE",
+        "DETECT_PRESENCE",
+        "WAIT_FOR_USER_ENGAGEMENT",
+        "THINKING",
+        "CAPTURE_PHOTOS",
+        "WAIT_FOR_USER_CHOOSE_PHOTO",
+        "PRINT_PHOTO",
+        "PRINT_SUCCESS",
+        "GOODBYE",
+    ]
+    state_icons = {
+        "IDLE": "😴",
+        "DETECT_PRESENCE": "👀",
+        "THINKING": "🤔",
+        "WAIT_FOR_USER_ENGAGEMENT": "👋",
+        "CAPTURE_PHOTOS": "📸",
+        "WAIT_FOR_USER_CHOOSE_PHOTO": "🖼️",
+        "PRINT_PHOTO": "🖨️",
+        "PRINT_SUCCESS": "✅",
+        "GOODBYE": "👋",
+    }
+    current_state = ui_state.get("state", "IDLE")
+    current_index = states_order.index(current_state) if current_state in states_order else -1
+
+    with ui.column().classes("flex-grow"):
+        with ui.row().classes("w-full"):
+            for i, state in enumerate(states_order):
+                icon = state_icons.get(state, "❓")
+                label = ui.label(icon).classes("text-2xl mx-2")
+                if i <= current_index:
+                    label.classes("text-white")
+                else:
+                    label.classes("text-white opacity-10")
+
+
+def build_global_username_input():
+    with ui.column():
+        with ui.row():
+            global_username_input = (
+                ui.input("Global Username", value=app.storage.general["global_username"])
+                .props("dark")
+                .classes("flex-grow")
+            )
+
+            def update_global_username():
+                app.storage.general["global_username"] = global_username_input.value
+                render_event.emit()
+
+            my_button("Update Global Username", on_click=update_global_username)
+
+
+def build_conversation_table():
+    with ui.column().classes("w-full mt-4"):
+        with ui.element("div").classes("conversation-scroll"):
+            columns = [
+                {"name": "role", "label": "Role", "field": "role", "align": "left"},
+                {"name": "content", "label": "Message", "field": "content", "align": "left"},
+            ]
+            rows = []
+            for msg in master_message_list:
+                if msg["role"] == "system":
+                    continue
+                content = msg.get("content", "")
+                if msg["role"] == "assistant" and "tool_calls" in msg:
+                    tool_names = [tc["function"]["name"] for tc in msg["tool_calls"]]
+                    tool_str = f" (tool calls: {tool_names})"
+                    content = f"{content}{tool_str}" if content else tool_str
+                rows.append({"role": msg["role"], "content": content})
+            ui.table(columns=columns, rows=rows).props("wrap-cells").classes("w-full text-white bg-gray-800")
+
+
 def build_admin_ui():
     last_tool_called, last_tool_result = get_last_tool_info()
     ui_state = api_get_niki_ui(last_tool_called, last_tool_result, app.storage.general["global_username"], photo_list)
@@ -341,50 +419,10 @@ def build_admin_ui():
                         label.classes("text-white opacity-10")
         # Right: global username
         with ui.column():
-            with ui.row():
-                global_username_input = (
-                    ui.input("Global Username", value=app.storage.general["global_username"])
-                    .props("dark")
-                    .classes("flex-grow")
-                )
-
-                def update_global_username():
-                    app.storage.general["global_username"] = global_username_input.value
-                    render_event.emit()
-
-                my_button("Update Global Username", on_click=update_global_username)
-
-    # # Previous UI States
-    # with ui.column().classes("w-full mt-4"):
-    #     ui.label("Previous UI States:").classes("text-white text-lg")
-    #     for prev in reversed(ui_state_history[-10:]):
-    #         with ui.expansion(f"State: {prev.get('state', 'unknown')}", icon="info").classes("text-white bg-gray-800"):
-    #             for k, v in prev.items():
-    #                 ui.label(f"{k}: {v}").classes("text-white")
+            build_global_username_input()
 
     # Conversation Messages
-    with ui.column().classes("w-full mt-4"):
-        with ui.element("div").classes("conversation-scroll"):
-            columns = [
-                {"name": "role", "label": "Role", "field": "role", "align": "left"},
-                {"name": "content", "label": "Message", "field": "content", "align": "left"},
-            ]
-            rows = []
-            for msg in master_message_list:
-                if msg["role"] == "system":
-                    continue
-                content = msg.get("content", "")
-                if msg["role"] == "assistant" and "tool_calls" in msg:
-                    tool_names = [tc["function"]["name"] for tc in msg["tool_calls"]]
-                    tool_str = f" (tool calls: {tool_names})"
-                    content = f"{content}{tool_str}" if content else tool_str
-                rows.append({"role": msg["role"], "content": content})
-            ui.table(columns=columns, rows=rows).props("wrap-cells").classes("w-full text-white bg-gray-800")
-
-
-def build_user_admin_ui():
-    for msg in master_message_list:
-        display_message(msg)
+    build_conversation_table()
 
 
 def handle_turn_ui(mode, my_shared_state, photo_list):
