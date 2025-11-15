@@ -46,7 +46,7 @@ SYSTEM_PROMPT = '''You are Niki, an automated photo session assistant. Follow th
 3. If engaged, call text_to_speech_with_emotions with emotion "HAPPY" to tell the user to get ready for a photo shoot (e.g., "Great! Stand still and smile. Getting ready to take your photo!"), then call assess_camera_framing for framing.
 4. If framing is good, call text_to_speech_with_emotions with emotion "HAPPY" to say "cheese" (or similar, e.g., "Say cheese! Smile big!"), then call capture_photos.
    - If framing is bad, retry assess_camera_framing up to 2 times. If still bad after retries, call text_to_speech_with_emotions with emotion "CONFUSED" to guide the user (e.g., "Oops, the framing isn't quite right. Please adjust your position."), then retry step 3. After 3 total attempts, end the session.
-5. If capture success, call text_to_speech_with_emotions with emotion "HAPPY" to ask the user to select a photo (e.g., "Awesome shots! Which one do you like best? Say 'first', 'second', or 'third'."), then call wait_for_user_choose_photo (expect photo selection via voice: "first", "second", "third").
+5. If capture success, call text_to_speech_with_emotions with emotion "HAPPY" to ask the user to select a photo (e.g., "Awesome shots! Which one do you like best? Click on your favorite photo."), then call wait_for_user_choose_photo (expect photo selection via click: index 0, 1, 2, etc.).
    - If capture fails, retry capture_photos up to 2 times. If still failing, call text_to_speech_with_emotions with emotion "SAD" to apologize (e.g., "Sorry, there was an issue taking the photo. Let's try again later."), then end the session.
 6. If photo selected, call text_to_speech_with_emotions with emotion "HAPPY" to say "I am printing the photo for you" (or similar, e.g., "Printing your favorite photo now!"), then call print_photo.
    - If selection is invalid, prompt again once, then default to the first photo or end.
@@ -250,7 +250,7 @@ def get_button_and_responses_from_tool_call(tool_name):
     elif tool_name == 'print_photo':
         return {'Printed': 'yes', 'Failed': 'no'}
     elif tool_name == 'wait_for_user_choose_photo':
-        return {'First': 'first', 'Second': 'second', 'Third': 'third'}
+        return {f'Photo {i+1}': str(i) for i in range(len(photo_list))}
     else:
         return {}
 
@@ -424,13 +424,16 @@ async def handle_user_input(message: str):
             }
         )
         # Handle photo selection
-        if my_shared_state.pending_tool_name == 'wait_for_user_choose_photo' and message in ['first', 'second', 'third']:
-            index = {'first': 0, 'second': 1, 'third': 2}[message]
-            if index < len(photo_list):
-                src = photo_list[index]
-                dst = os.path.join('chosen_photos', os.path.basename(src))
-                os.rename(src, dst)
-                chosen_photos.append(dst)
+        if my_shared_state.pending_tool_name == 'wait_for_user_choose_photo':
+            try:
+                index = int(message)
+                if 0 <= index < len(photo_list):
+                    src = photo_list[index]
+                    dst = os.path.join('chosen_photos', os.path.basename(src))
+                    os.rename(src, dst)
+                    chosen_photos.append(dst)
+            except ValueError:
+                pass
         my_shared_state.pending_tool_call_id = None
         my_shared_state.pending_tool_args = None
         my_shared_state.pending_tool_name = None
@@ -539,12 +542,10 @@ async def main_page(mode: str):
                 elif last_tool_called == 'detect_presence':
                     ui.image('/assets/step_forward.jpeg').classes('w-full')
                 elif last_tool_called == 'wait_for_user_choose_photo':
-                    with ui.row():
-                        for photo in photo_list:
-                            ui.image(f'/user_photos/{os.path.basename(photo)}').classes('w-1/3')
-                    my_button("First", on_click=lambda: handle_user_input("first"))
-                    my_button("Second", on_click=lambda: handle_user_input("second"))
-                    my_button("Third", on_click=lambda: handle_user_input("third"))
+                    with ui.row().classes("w-full"):
+                        for i, photo in enumerate(photo_list):
+                            img = ui.image(f'/user_photos/{os.path.basename(photo)}').classes('w-1/3')
+                            img.on('click', lambda e, i=i: handle_user_input(str(i)))
                 elif last_tool_called == 'assess_camera_framing':
                     my_button("Cancel", on_click=lambda: handle_user_input("cancel"))
                 elif last_tool_called == 'capture_photos':
@@ -561,12 +562,9 @@ async def main_page(mode: str):
                         user_input.value))
             elif my_shared_state.turn == 'user' and my_shared_state.pending_tool_name == 'wait_for_user_choose_photo':
                 with ui.row():
-                    ui.label(str(photo_list))
-                    for photo in photo_list:
-                        ui.image(f'/user_photos/{os.path.basename(photo)}').classes('w-1/3')
-                my_button("First", on_click=lambda: handle_user_input("first"))
-                my_button("Second", on_click=lambda: handle_user_input("second"))
-                my_button("Third", on_click=lambda: handle_user_input("third"))
+                    for i, photo in enumerate(photo_list):
+                        img = ui.image(f'/user_photos/{os.path.basename(photo)}').classes('w-1/3')
+                        img.on('click', lambda e, i=i: handle_user_input(str(i)))
             elif my_shared_state.turn == 'admin' and my_shared_state.pending_tool_name:
                 button_and_responses = get_button_and_responses_from_tool_call(my_shared_state.pending_tool_name)
                 if mode == 'admin':

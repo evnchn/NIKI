@@ -1,6 +1,7 @@
 tts/
 
 user_photos/
+chosen_photos/
 
 .debug.json
 
