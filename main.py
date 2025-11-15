@@ -6,8 +6,10 @@ from time import time
 
 from dotenv import load_dotenv
 from fastapi import Request
+from fastapi.responses import RedirectResponse
 from nicegui import Event, app, background_tasks, binding, ui
 from sse_starlette.sse import EventSourceResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 import tts
 from camera import camera
@@ -15,6 +17,53 @@ from niki_ai import AIloop, clear_conversation, handle_user_input, master_messag
 from niki_utils import get_button_and_responses_from_tool_call, my_button, mydisplay, mystrip
 from photos import process_and_save_photo
 from tts import play_tts
+
+assert "NIKI_API_KEY" in os.environ, "NIKI_API_KEY environment variable not set"
+assert "NIKI_USER_PASSWORD" in os.environ, "NIKI_USER_PASSWORD environment variable not set"
+
+unrestricted_page_routes = {"/login"}
+
+passwords = {
+    "user": os.environ["NIKI_USER_PASSWORD"],
+}
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    """This middleware restricts access to all NiceGUI pages.
+
+    It redirects the user to the login page if they are not authenticated.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        if app.storage.user.get("authenticated", False):
+            return await call_next(request)  # authenticated via NiceGUI
+        if request.cookies.get("api_key") == os.environ["NIKI_API_KEY"]:
+            return await call_next(request)  # authenticated via API key
+        if request.url.path.startswith("/_nicegui") or request.url.path in unrestricted_page_routes:
+            return await call_next(request)  # necessary pages
+        return RedirectResponse(url="/login")
+
+
+app.add_middleware(AuthMiddleware)
+
+
+@ui.page("/login")
+def login_page():
+    def try_login() -> None:  # local function to avoid passing username and password as arguments
+        if passwords.get(username.value) == password.value:
+            app.storage.user.update({"username": username.value, "authenticated": True})
+            ui.navigate.to("/")  # go back to where the user wanted to go
+        else:
+            ui.notify("Wrong username or password", color="negative")
+
+    if app.storage.user.get("authenticated", False):
+        return RedirectResponse("/")
+    with ui.card().classes("absolute-center"):
+        username = ui.input("Username").on("keydown.enter", try_login)
+        password = ui.input("Password", password=True, password_toggle_button=True).on("keydown.enter", try_login)
+        ui.button("Log in", on_click=try_login)
+    return None
+
 
 load_dotenv()
 
