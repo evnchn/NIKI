@@ -9,7 +9,7 @@ import os
 from io import BytesIO
 from time import time
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 def process_and_save_photo(b64url: str, out_dir: str = "user_photos") -> str:
@@ -26,6 +26,7 @@ def process_and_save_photo(b64url: str, out_dir: str = "user_photos") -> str:
         filetype = "png"
     image_bytes = base64.b64decode(encoded)
     image = Image.open(BytesIO(image_bytes))
+    ImageOps.exif_transpose(image, in_place=True)
 
     # Crop to 14:9 aspect ratio (horizontal)
     width, height = image.size
