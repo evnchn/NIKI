@@ -338,13 +338,18 @@ async def main_page(mode: str):
     if mode == "admin":
         my_button("Stop Voice", on_click=lambda: stop_voice_event.emit())
         my_button("Clear Conversation", on_click=lambda: clear_conversation(my_shared_state))
-        global_username_input = ui.input("Global Username", value=app.storage.general["global_username"]).props("dark")
+        with ui.row().classes("w-full"):
+            global_username_input = (
+                ui.input("Global Username", value=app.storage.general["global_username"])
+                .props("dark")
+                .classes("flex-grow")
+            )
 
-        def update_global_username():
-            app.storage.general["global_username"] = global_username_input.value
-            render_event.emit()
+            def update_global_username():
+                app.storage.general["global_username"] = global_username_input.value
+                render_event.emit()
 
-        my_button("Update Global Username", on_click=update_global_username)
+            my_button("Update Global Username", on_click=update_global_username)
 
         async def handle_interrupt(interrupt_text):
             # if there is a tool call then handle_user_input with interrupt:
@@ -356,8 +361,9 @@ async def main_page(mode: str):
                 my_shared_state.turn = "ai"
                 await interrupt_with_user_message(interrupt_text, my_shared_state)
 
-        interrupt_input = ui.input("User message for interrupt", value="").props("dark")
-        my_button("Interrupt", on_click=lambda: handle_interrupt(interrupt_input.value))
+        with ui.row().classes("w-full"):
+            interrupt_input = ui.input("User message for interrupt", value="").props("dark").classes("flex-grow")
+            my_button("Interrupt", on_click=lambda: handle_interrupt(interrupt_input.value))
 
     def refresh():
         main_container.clear()
