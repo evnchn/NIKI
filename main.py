@@ -827,6 +827,24 @@ def download_photo():
             ui.label("No chosen photos available for download.")
 
 
+@ui.page("/xiaomicam/photo/all")
+def download_all_photo():
+    """
+    Photo download page for all photos.
+
+    Displays all photos with download links.
+    """
+    # Show all chosen photos for download
+    with ui.column():
+        for photo in os.listdir("user_photos"):
+            ui.image(f"/user_photos/{photo}").classes("w-1/3")
+            ui.label(f"Download {photo}:")
+            ui.link(
+                f"/user_photos/{photo}",
+                f"/user_photos/{photo}",
+            )
+
+
 @ui.page("/test/camera")
 def test_camera_page():
     """
