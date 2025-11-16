@@ -2,8 +2,8 @@
 Photo Processing Module
 
 This module handles photo capture processing for the NIKI Photo Booth.
-It decodes base64 image data, crops to 14:9 aspect ratio, resizes to 1400x900,
-adds white borders, and saves processed images to disk.
+It decodes base64 image data, crops to overlay aspect ratio, resizes to overlay size,
+overlays onto TEMPLATE.png, and saves processed images to disk.
 """
 
 import base64
@@ -16,10 +16,10 @@ from PIL import Image, ImageOps
 
 def process_and_save_photo(b64url: str, out_dir: str = "user_photos") -> str:
     """
-    Process a base64 data URL and save a final image file.
+    Process a base64 data URL and save a final image file overlaid on TEMPLATE.png.
 
-    Decodes the base64 image data, crops to 14:9 aspect ratio, resizes to 1400x900
-    with 50px white borders, and saves to the specified directory.
+    Decodes the base64 image data, crops to overlay aspect ratio, resizes to overlay size,
+    overlays onto TEMPLATE.png at specified coordinates, and saves to the specified directory.
 
     Args:
         b64url: Base64 encoded data URL (data:image/jpeg;base64,... or data:image/png;base64,...)
@@ -34,6 +34,15 @@ def process_and_save_photo(b64url: str, out_dir: str = "user_photos") -> str:
     if not b64url:
         raise ValueError("Empty image data")
 
+    # Overlay coordinates and size
+    overlay_x1 = 100
+    overlay_y1 = 102
+    overlay_x2 = 1494
+    overlay_y2 = 833
+    overlay_width = overlay_x2 - overlay_x1
+    overlay_height = overlay_y2 - overlay_y1
+    aspect = overlay_width / overlay_height
+
     # Decode base64 data URL
     header, encoded = b64url.split(",", 1)
     if header in ("data:image/jpeg;base64", "data:image/jpg;base64"):
@@ -47,9 +56,8 @@ def process_and_save_photo(b64url: str, out_dir: str = "user_photos") -> str:
     # Correct image orientation based on EXIF data
     ImageOps.exif_transpose(image, in_place=True)
 
-    # Crop to 14:9 aspect ratio (horizontal)
+    # Crop to overlay aspect ratio
     width, height = image.size
-    aspect = 14 / 9
     if width / height > aspect:
         # Image is too wide, crop sides
         new_width = int(height * aspect)
@@ -67,16 +75,16 @@ def process_and_save_photo(b64url: str, out_dir: str = "user_photos") -> str:
 
     cropped = image.crop((left, top, right, bottom)).convert("RGB")
 
-    # Resize to inner area 1400x900 then add 50px white border
-    target_size = (1400, 900)
+    # Resize to overlay size
+    target_size = (overlay_width, overlay_height)
     resized = cropped.resize(target_size, Image.LANCZOS)
-    border_px = 50
-    bordered_width = resized.width + border_px * 2
-    bordered_height = resized.height + border_px * 2
 
-    # Create white border background
-    bordered = Image.new("RGB", (bordered_width, bordered_height), (255, 255, 255))
-    bordered.paste(resized, (border_px, border_px))
+    # Load TEMPLATE.png
+    template_path = "assets/TEMPLATE.png"
+    template = Image.open(template_path).convert("RGB")
+
+    # Overlay the resized image onto the template
+    template.paste(resized, (overlay_x1, overlay_y1))
 
     # Ensure output directory exists
     os.makedirs(out_dir, exist_ok=True)
@@ -85,8 +93,8 @@ def process_and_save_photo(b64url: str, out_dir: str = "user_photos") -> str:
     filename = f"{out_dir}/photo_{int(time())}.{filetype}"
     with open(filename, "wb") as f:
         if filetype == "jpg":
-            bordered.save(f, format="JPEG")
+            template.save(f, format="JPEG")
         else:
-            bordered.save(f, format="PNG")
+            template.save(f, format="PNG")
 
     return filename
