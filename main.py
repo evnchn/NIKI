@@ -488,7 +488,8 @@ async def main_page(mode: str):
                 "if (window.currentAudio) { window.currentAudio.pause(); window.currentAudio.currentTime = 0; }"
             )
         )
-        camera_taking_event.subscribe(cam.capture)
+        # disabled since native app takes precedence
+        # camera_taking_event.subscribe(cam.capture)
     if mode == "admin":
         with ui.row():
             my_button("Stop Voice", on_click=lambda: stop_voice_event.emit())
