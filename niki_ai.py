@@ -506,7 +506,7 @@ async def interrupt_with_user_message(user_message: str, shared_state):
     master_message_list.append(
         {
             "role": "system",
-            "content": "Respond to the following user message using text_to_speech_with_emotions tool call, then resume the original workflow.",
+            "content": "Depending on the scenario, either respond to the following user message using text_to_speech_with_emotions tool call, then resume the original workflow; Or, silently jump to the user desired step directly if applicable.",
         }
     )
     # Add user message
